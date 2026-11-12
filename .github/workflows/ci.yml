@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [english, docs, rust-test, rust-fmt, node-test, node-syntax, validate]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - name: Install libsqlite3-dev
+        if: matrix.check == 'rust-test'
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      # Cross-repository tests need the sibling projects that this one depends
+      # on. They are cloned next to the checkout, exactly like the local layout:
+      # the repository under test stays in $GITHUB_WORKSPACE, the siblings land
+      # in its parent directory, so a relative "../opurom-spec/..." resolves.
+      - name: Checkout sibling repositories
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE/.."
+          for repo in opurom-spec opurom-lang opurom-core opurom-render opurom-platform opurom-server opurom-db opurom-runtime-adapters opurom-plugins opurom-cli; do
+            url="https://github.com/opurom/${repo}.git"
+            if [ "$repo" != "$(basename "$GITHUB_WORKSPACE")" ] && git ls-remote --exit-code "$url" >/dev/null 2>&1; then
+              git clone --depth 1 "$url" "$repo" || true
+            fi
+          done
+          ls -1
+      - name: Run ${{ matrix.check }}
+        run: node .github/scripts/ci-check.mjs ${{ matrix.check }}
