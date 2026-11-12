@@ -1,0 +1,13 @@
+{
+  "name": "opurom-debug",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Zero-dependency DAP subset server for OPUROM IR state debugging.",
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
