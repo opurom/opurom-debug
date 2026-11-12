@@ -1,0 +1,26 @@
+{
+  "ir": "0.1",
+  "app": "Paging",
+  "state": [
+    { "name": "alpha", "type": "int", "init": 1 },
+    { "name": "beta", "type": "int", "init": 2 },
+    { "name": "gamma", "type": "int", "init": 3 },
+    { "name": "delta", "type": "int", "init": 4 }
+  ],
+  "tree": {
+    "id": 0,
+    "kind": "Column",
+    "props": { "gap": 4 },
+    "children": [
+      {
+        "id": 1,
+        "kind": "Button",
+        "props": { "label": "bump" },
+        "children": [],
+        "events": { "tap": { "op": "add", "target": "alpha", "value": 1 } }
+      }
+    ],
+    "events": {}
+  },
+  "theme": { "mode": "system" }
+}

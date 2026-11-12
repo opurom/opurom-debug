@@ -3,6 +3,13 @@
 import fs from 'node:fs';
 import readline from 'node:readline';
 
+// Tests set OPR_PID_FILE to verify disconnect reaps every child process.
+if (process.env.OPR_PID_FILE) {
+  try {
+    fs.appendFileSync(process.env.OPR_PID_FILE, `${process.pid}\n`);
+  } catch {}
+}
+
 const program = process.argv[2];
 if (!program) {
   console.error('error: missing IR path');
