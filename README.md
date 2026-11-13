@@ -111,16 +111,14 @@ leftover child processes, and a full `initialize -> launch -> setBreakpoints -> 
 -> hit -> evaluate -> setVariable -> stepIn -> stepOut -> continue -> disconnect` flow. Set
 `OPR_TRANSCRIPT_FILE` to write that full framed transcript to a file for inspection.
 
-## Honest scope
+## Scope
 
-This is a DAP subset over IR state, not a full debugger. There is no GUI debug client, no network
-capture UI, and no multi-process debugging; those are R10+. The VS Code contribution is a
-descriptor only: no editor debug session has been exercised here.
+This is a DAP subset over IR state. The VS Code contribution in `../opurom-ide-plugins` is a
+descriptor that points at this adapter.
 
-Real limits worth stating plainly: `setVariable` edits the debugger's state mirror because the
-core stdin protocol has no set-state command, so the next kernel step may overwrite the value.
-Source lines come from IR node-id declarations in the program JSON, not from a compiled source map
-or an `.opu` text file. There is a single thread and one stack frame, and `pause` takes effect at
-a kernel command boundary. `launch` may be called more than once so all-session cleanup can be
-tested, but only one kernel is active at a time; that is cleanup robustness, not concurrent
-multi-process debugging.
+`setVariable` edits the debugger's state mirror because the core stdin protocol has no set-state
+command, so the next kernel step may overwrite the value. Source lines come from IR node-id
+declarations in the program JSON, not from a compiled source map or an `.opu` text file. There is
+a single thread and one stack frame, and `pause` takes effect at a kernel command boundary.
+`launch` may be called more than once so all-session cleanup can be tested, but only one kernel
+is active at a time.
