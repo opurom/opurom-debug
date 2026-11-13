@@ -98,6 +98,8 @@ class DapServer {
     this.currentLine = 1;
     this.breakpointsBySource = new Map();
     this.breakpointId = 0;
+    this.dataBreakpoints = new Map();
+    this.dataBreakpointId = 0;
     this.exceptionFilters = [];
     this.columnsStartAt1 = true;
     this.exception = null;
@@ -196,6 +198,12 @@ class DapServer {
       case 'setVariable':
         this.setVariable(message, args);
         return;
+      case 'dataBreakpointInfo':
+        this.dataBreakpointInfo(message, args);
+        return;
+      case 'setDataBreakpoints':
+        this.setDataBreakpoints(message, args);
+        return;
       case 'evaluate':
         this.evaluate(message, args);
         return;
@@ -273,6 +281,8 @@ class DapServer {
     this.skipLineBreakpoint = false;
     this.breakpointsBySource.clear();
     this.breakpointId = 0;
+    this.dataBreakpoints.clear();
+    this.dataBreakpointId = 0;
     this.exception = null;
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.sendResponse(request, true);
@@ -413,11 +423,61 @@ class DapServer {
     const parsed = parseVariableValue(args.value, this.kernel.state[name]);
     if (parsed.error) throw new DapError(`Invalid value for ${name}: ${parsed.error}`, ERR_VARIABLE);
     this.kernel.setState(name, parsed.value);
+    // A debugger edit is not a kernel write, so it advances the watched
+    // baseline instead of firing the data breakpoint on the next step.
+    const watched = this.dataBreakpoints.get(`state:${name}`);
+    if (watched) watched.last = parsed.value;
     this.sendResponse(request, true, {
       value: valueText(parsed.value),
       type: valueKind(parsed.value),
       variablesReference: 0
     });
+  }
+
+  dataBreakpointInfo(request, args) {
+    this.requireKernel();
+    const name = args.name;
+    if (args.variablesReference !== undefined && Number(args.variablesReference) !== 1) {
+      throw new DapError(`Unknown variablesReference: ${args.variablesReference}`, ERR_PAGE);
+    }
+    if (typeof name !== 'string' || !Object.hasOwn(this.kernel.state, name)) {
+      throw new DapError(`Unknown state name for a data breakpoint: ${String(name)}`, ERR_VARIABLE);
+    }
+    this.sendResponse(request, true, {
+      dataId: `state:${name}`,
+      description: `${name} (kernel state value)`,
+      accessTypes: ['write'],
+      canPersist: false
+    });
+  }
+
+  setDataBreakpoints(request, args) {
+    this.requireKernel();
+    const requested = Array.isArray(args.breakpoints) ? args.breakpoints : null;
+    if (!requested) {
+      throw new DapError('setDataBreakpoints requires a breakpoints array', ERR_BREAKPOINT);
+    }
+    const accepted = new Map();
+    const reported = requested.map(entry => {
+      const bp = entry && typeof entry === 'object' ? entry : {};
+      const dataId = typeof bp.dataId === 'string' ? bp.dataId : '';
+      const accessType = bp.accessType === undefined ? 'write' : bp.accessType;
+      const name = dataId.startsWith('state:') ? dataId.slice('state:'.length) : '';
+      let message = null;
+      if (!dataId) message = 'A dataId from dataBreakpointInfo is required';
+      else if (!name) message = `Unknown data breakpoint id: ${dataId}`;
+      else if (!Object.hasOwn(this.kernel.state, name)) {
+        message = `Unknown state name for a data breakpoint: ${name}`;
+      } else if (accessType !== 'write') {
+        message = `Unsupported access type: ${JSON.stringify(accessType)}; kernel steps only write state`;
+      }
+      if (message) return { verified: false, message };
+      const id = ++this.dataBreakpointId;
+      accepted.set(dataId, { id, dataId, name, last: this.kernel.state[name] });
+      return { id, verified: true, dataId, description: `${name} (kernel state value)` };
+    });
+    this.dataBreakpoints = accepted;
+    this.sendResponse(request, true, { breakpoints: reported });
   }
 
   evaluate(request, args) {
@@ -550,6 +610,21 @@ class DapServer {
     );
   }
 
+  // Kernel steps are the only writes a data breakpoint observes: every watched
+  // name is compared after each step and its baseline advances either way, so a
+  // change fires once and later steps stay quiet until the value moves again.
+  matchedDataBreakpoint() {
+    let changed = null;
+    for (const record of this.dataBreakpoints.values()) {
+      const value = this.kernel.state[record.name];
+      if (Object.is(record.last, value)) continue;
+      const before = record.last;
+      record.last = value;
+      if (!changed) changed = { name: record.name, before, value, id: record.id };
+    }
+    return changed;
+  }
+
   startSteps(single = false, stopDescription = 'Completed one kernel step') {
     if (!this.kernel || this.running || this.ended || this.closing || this.completed) return;
     this.exception = null;
@@ -597,6 +672,16 @@ class DapServer {
           this.pauseRequested = false;
           this.stopped = true;
           this.emitStopped('pause', { description: 'Paused after a kernel step' });
+          return;
+        }
+        const dataChange = this.matchedDataBreakpoint();
+        if (dataChange) {
+          this.stopped = true;
+          this.emitStopped('data breakpoint', {
+            description: `State changed: ${dataChange.name}: ${valueText(dataChange.before)} -> ${valueText(dataChange.value)}`,
+            text: `${dataChange.name}: ${valueText(dataChange.before)} -> ${valueText(dataChange.value)}`,
+            hitBreakpointIds: [dataChange.id]
+          });
           return;
         }
         const condition = this.matchedConditionBreakpoint();

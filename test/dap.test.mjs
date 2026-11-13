@@ -386,7 +386,7 @@ test('initialize advertises the full DAP capability set', async t => {
   for (const key of [
     'supportsSetVariable', 'supportsVariablePaging', 'supportsExceptionFilterOptions',
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
-    'supportsHitConditionalBreakpoints',
+    'supportsHitConditionalBreakpoints', 'supportsDataBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
     'supportsFrameStatsRequest'
   ]) {
@@ -1062,6 +1062,115 @@ test('invalid hit conditions are rejected with a diagnostic and never pause', as
   assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 0);
   const final = await client.request('variables', { variablesReference: 1 });
   assert.equal(final.body.variables.find(v => v.name === 'count').value, '3');
+  const alive = await client.request('threads');
+  assert.equal(alive.success, true);
+  await finish(client);
+});
+
+test('data breakpoints stop on kernel writes to a watched state name', async t => {
+  const client = startServer(t);
+  const init = await initialize(client);
+  assert.equal(init.body.supportsDataBreakpoints, true);
+  const beforeLaunch = await client.request('dataBreakpointInfo', { name: 'count' });
+  assert.equal(beforeLaunch.success, false);
+  assert.equal(beforeLaunch.body.error.id, 1001);
+  assert.match(beforeLaunch.message, /launch a kernel session/);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+
+  const info = await client.request('dataBreakpointInfo', { name: 'count', variablesReference: 1 });
+  assert.equal(info.success, true, info.message);
+  assert.equal(info.body.dataId, 'state:count');
+  assert.equal(info.body.description, 'count (kernel state value)');
+  assert.deepEqual(info.body.accessTypes, ['write']);
+  assert.equal(info.body.canPersist, false);
+  const set = await client.request('setDataBreakpoints', {
+    breakpoints: [{ dataId: info.body.dataId, accessType: 'write' }]
+  });
+  assert.equal(set.success, true, set.message);
+  assert.equal(set.body.breakpoints.length, 1);
+  assert.equal(set.body.breakpoints[0].verified, true, set.body.breakpoints[0].message);
+  const breakpointId = set.body.breakpoints[0].id;
+  assert.equal(typeof breakpointId, 'number');
+
+  await client.request('configurationDone');
+  const first = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'data breakpoint', 'first data stop'
+  );
+  assert.equal(first.body.stateVersion, 1);
+  assert.equal(first.body.description, 'State changed: count: 0 -> 1');
+  assert.equal(first.body.text, 'count: 0 -> 1');
+  assert.deepEqual(first.body.hitBreakpointIds, [breakpointId]);
+
+  // A debugger edit moves the baseline, so the next stop reports the kernel's
+  // own write instead of the value the debugger replaced.
+  const edited = await client.request('setVariable', { variablesReference: 1, name: 'count', value: '50' });
+  assert.equal(edited.success, true, edited.message);
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  const second = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'data breakpoint' && m.body.stateVersion === 2, 'second data stop'
+  );
+  assert.equal(second.body.description, 'State changed: count: 50 -> 2');
+
+  const cleared = await client.request('setDataBreakpoints', { breakpoints: [] });
+  assert.equal(cleared.success, true, cleared.message);
+  assert.deepEqual(cleared.body.breakpoints, []);
+  const done = await client.request('continue', { threadId: 1 });
+  assert.equal(done.success, true, done.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after clearing');
+  assert.equal(
+    client.events.filter(e => e.event === 'stopped' && e.body.reason === 'data breakpoint').length, 2
+  );
+  const variables = await client.request('variables', { variablesReference: 1 });
+  assert.equal(variables.body.variables.find(v => v.name === 'count').value, '3');
+  await finish(client);
+});
+
+test('data breakpoint validation rejects unknown ids and non-write access', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const unknownName = await client.request('dataBreakpointInfo', { name: 'missing' });
+  assert.equal(unknownName.success, false);
+  assert.equal(unknownName.body.error.id, 2001);
+  assert.match(unknownName.message, /Unknown state name for a data breakpoint/);
+  const badReference = await client.request('dataBreakpointInfo', { name: 'count', variablesReference: 7 });
+  assert.equal(badReference.success, false);
+  assert.equal(badReference.body.error.id, 2003);
+  assert.match(badReference.message, /Unknown variablesReference/);
+
+  const requested = [
+    { dataId: 'state:missing' },
+    { dataId: 'other:count' },
+    { dataId: 42 },
+    {},
+    { dataId: 'state:count', accessType: 'read' }
+  ];
+  const set = await client.request('setDataBreakpoints', { breakpoints: requested });
+  assert.equal(set.success, true, set.message);
+  assert.equal(set.body.breakpoints.length, requested.length);
+  for (const breakpoint of set.body.breakpoints) {
+    assert.equal(breakpoint.verified, false, JSON.stringify(breakpoint));
+    assert.equal(typeof breakpoint.message, 'string');
+  }
+  assert.match(set.body.breakpoints[0].message, /Unknown state name for a data breakpoint/);
+  assert.match(set.body.breakpoints[1].message, /Unknown data breakpoint id/);
+  assert.match(set.body.breakpoints[2].message, /dataId from dataBreakpointInfo/);
+  assert.match(set.body.breakpoints[3].message, /dataId from dataBreakpointInfo/);
+  assert.match(set.body.breakpoints[4].message, /Unsupported access type/);
+  const malformed = await client.request('setDataBreakpoints', {});
+  assert.equal(malformed.success, false);
+  assert.equal(malformed.body.error.id, 2004);
+
+  await client.request('configurationDone');
+  await client.waitForEvent('terminated', () => true, 'terminated with no data breakpoints');
+  assert.equal(client.events.filter(e => e.event === 'stopped').length, 0);
   const alive = await client.request('threads');
   assert.equal(alive.success, true);
   await finish(client);
