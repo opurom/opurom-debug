@@ -31,7 +31,8 @@ DAP error response, and the server stays alive.
 
 ## Supported requests
 
-`initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `configurationDone`,
+`initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
+`setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
 `exceptionInfo`, `opurom/frameStats`, `continue`, `next`, `stepIn`, `stepOut`, `pause`,
 `disconnect`. Unknown requests
@@ -41,7 +42,8 @@ and malformed frames get proper DAP error responses without terminating the serv
 `initialize` advertises the standard DAP capabilities `supportsConfigurationDoneRequest`,
 `supportsEvaluateForHovers`, `supportsConditionalBreakpoints`,
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
-`supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest` and
+`supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
+`supportsDataBreakpoints` and
 `exceptionBreakpointFilters` (`all`, `uncaught`), plus four documented OPUROM extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
 `supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`.
@@ -71,6 +73,20 @@ error responses.
 
 `setExceptionBreakpoints` accepts `filters` and `filterOptions` (`all`, `uncaught`), stores them,
 and an exception `stopped` event reports the armed filters. Unknown filters get a typed error.
+
+### Data breakpoints
+
+`dataBreakpointInfo` resolves a live state name to an opaque `dataId` (`state:<name>`) with
+`accessTypes: ["write"]` and `canPersist: false`; an unknown name returns error 2001, an unknown
+`variablesReference` error 2003, and a request before `launch` the generic request error.
+`setDataBreakpoints` replaces the full watch set (an empty array clears it) and returns one
+`Breakpoint` per entry: entries with an unknown `dataId`, an unknown state name or an access type
+other than `write` come back `verified: false` with the reason, a malformed request gets error
+2004. After each kernel step the adapter compares every watched name with its baseline; the first
+value that moved produces a `stopped` event with reason `data breakpoint`, a description of the
+form `State changed: <name>: <before> -> <after>` and the breakpoint id in `hitBreakpointIds`.
+Kernel steps are the only writes observed: a `setVariable` edit advances the baseline instead of
+firing, so the next stop reports the kernel's own write.
 
 `exceptionInfo` reports the active kernel error recorded by the exception `stopped` event. Its
 `exceptionId` names the first armed filter, or the kernel error text when no filter is armed;
@@ -148,7 +164,9 @@ expression, malformed completions arguments, invalid variable, invalid hit condi
 breakpoint, out-of-range page), completion labels and prefix filtering, `exceptionInfo` with and
 without an active exception, `opurom/frameStats` counters before launch, at a breakpoint stop and
 after the final step, exact hit counts over several stub-kernel state changes, initialize
-capability equality, session cleanup with no leftover child processes, and a full
+capability equality, data breakpoint stops on watched state writes (including a baseline moved by
+`setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
+child processes, and a full
 `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
 -> stepIn -> stepOut -> continue -> disconnect` flow. Set `OPR_TRANSCRIPT_FILE` to write that full
 framed transcript to a file for inspection.
