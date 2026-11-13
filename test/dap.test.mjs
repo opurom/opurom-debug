@@ -368,7 +368,7 @@ test('malformed frames and unknown requests do not kill the server', async t => 
   await finish(client);
 });
 
-test('initialize advertises the full capability DAP capability set', async t => {
+test('initialize advertises the full DAP capability set', async t => {
   const client = startServer(t);
   const init = await initialize(client);
   assert.deepEqual(init.body, CAPABILITIES);
@@ -628,7 +628,7 @@ test('disconnect cleans up all sessions without leftover child processes', async
   }
 });
 
-test('full capability DAP session flow produces a framed transcript', async t => {
+test('full DAP session flow produces a framed transcript', async t => {
   const client = startServer(t);
   const init = await initialize(client);
   assert.deepEqual(init.body, CAPABILITIES);
