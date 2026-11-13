@@ -33,7 +33,8 @@ DAP error response, and the server stays alive.
 
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `continue`, `next`, `stepIn`, `stepOut`, `pause`, `disconnect`. Unknown requests
+`exceptionInfo`, `opurom/frameStats`, `continue`, `next`, `stepIn`, `stepOut`, `pause`,
+`disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
 `initialized`, `stopped`, `continued`, `terminated`.
 
@@ -41,9 +42,9 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsEvaluateForHovers`, `supportsConditionalBreakpoints`,
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus three documented OPUROM extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus four documented OPUROM extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
-`supportsVerifiedSourceBreakpoints`.
+`supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -107,6 +108,15 @@ no-ops.
 `sessionsClosed`), clears state and exits cleanly. The suite verifies no child process is left
 behind.
 
+### Frame statistics
+
+`opurom/frameStats` reports the step counters the adapter collects for the active kernel session:
+`stepsPlanned` (commands queued at launch), `stepsExecuted` (commands the kernel answered),
+`totalMs`, `lastStepMs` and `avgStepMs` (wall-clock duration of each kernel command as the adapter
+times it), the derived `stepsPerSecond`, and the current kernel `stateVersion`. The counters come
+from timing the adapter's own kernel commands, describe exactly the current session, and reset at
+each `launch`. The request requires a launched kernel and returns a typed error before one.
+
 ## Typed errors
 
 | id | Meaning |
@@ -129,7 +139,8 @@ multi-variable IR, using the real `opurom-core` debug binary when available plus
 protocol-compatible stub so it stays self-contained. It covers every request, the error paths (bad
 expression, malformed completions arguments, invalid variable, invalid hit condition, unknown
 breakpoint, out-of-range page), completion labels and prefix filtering, `exceptionInfo` with and
-without an active exception, exact hit counts over several stub-kernel state changes, initialize
+without an active exception, `opurom/frameStats` counters before launch, at a breakpoint stop and
+after the final step, exact hit counts over several stub-kernel state changes, initialize
 capability equality, session cleanup with no leftover child processes, and a full
 `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
 -> stepIn -> stepOut -> continue -> disconnect` flow. Set `OPR_TRANSCRIPT_FILE` to write that full

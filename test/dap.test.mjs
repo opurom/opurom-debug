@@ -387,7 +387,8 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsSetVariable', 'supportsVariablePaging', 'supportsExceptionFilterOptions',
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
     'supportsHitConditionalBreakpoints',
-    'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints'
+    'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
+    'supportsFrameStatsRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -716,6 +717,42 @@ test('stepIn and stepOut advance real kernel steps', async t => {
   const cont = await client.request('continue', { threadId: 1 });
   assert.equal(cont.success, true, cont.message);
   await client.waitForEvent('terminated', () => true, 'terminated');
+  await finish(client);
+});
+
+test('frameStats reports adapter-measured step timing for the session', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/frameStats', { threadId: 1 });
+  assert.equal(before.success, false);
+  assert.match(before.message, /launch a kernel session/);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  await client.request('setBreakpoints', { source: { path: irPath }, breakpoints: [{ condition: 'count == 2' }] });
+  await client.request('configurationDone');
+  await client.waitForEvent('stopped', m => m.body.reason === 'breakpoint', 'breakpoint hit');
+  const atStop = await client.request('opurom/frameStats', { threadId: 1 });
+  assert.equal(atStop.success, true, atStop.message);
+  assert.equal(atStop.body.stepsPlanned, 3);
+  assert.equal(atStop.body.stepsExecuted, 2);
+  assert.equal(atStop.body.stateVersion, 2);
+  for (const field of ['totalMs', 'lastStepMs', 'avgStepMs', 'stepsPerSecond']) {
+    const value = atStop.body[field];
+    assert.equal(typeof value, 'number', field);
+    assert.ok(Number.isFinite(value) && value >= 0, `${field}: ${value}`);
+  }
+  assert.ok(atStop.body.totalMs >= atStop.body.lastStepMs);
+  assert.ok(Math.abs(atStop.body.avgStepMs - atStop.body.totalMs / 2) < 1e-9);
+  const expectedRate = atStop.body.totalMs > 0 ? 2000 / atStop.body.totalMs : 0;
+  assert.ok(Math.abs(atStop.body.stepsPerSecond - expectedRate) < 1e-6);
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const final = await client.request('opurom/frameStats', { threadId: 1 });
+  assert.equal(final.body.stepsExecuted, 3);
+  assert.equal(final.body.stateVersion, 3);
   await finish(client);
 });
 

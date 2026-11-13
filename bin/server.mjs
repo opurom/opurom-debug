@@ -98,6 +98,7 @@ class DapServer {
     this.exceptionFilters = [];
     this.columnsStartAt1 = true;
     this.exception = null;
+    this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.running = false;
     this.stopped = false;
     this.completed = false;
@@ -201,6 +202,9 @@ class DapServer {
       case 'exceptionInfo':
         this.exceptionInfo(message);
         return;
+      case 'opurom/frameStats':
+        this.frameStats(message);
+        return;
       case 'continue':
         this.requireKernel();
         this.stopped = false;
@@ -267,6 +271,7 @@ class DapServer {
     this.breakpointsBySource.clear();
     this.breakpointId = 0;
     this.exception = null;
+    this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.sendResponse(request, true);
   }
 
@@ -469,6 +474,22 @@ class DapServer {
     });
   }
 
+  // The counters come from timing the adapter's own kernel commands, so they
+  // describe exactly this session and need no kernel protocol support.
+  frameStats(request) {
+    this.requireKernel();
+    const { executed, totalMs, lastMs } = this.stepStats;
+    this.sendResponse(request, true, {
+      stepsPlanned: this.steps.length,
+      stepsExecuted: executed,
+      totalMs,
+      lastStepMs: lastMs,
+      avgStepMs: executed ? totalMs / executed : 0,
+      stepsPerSecond: totalMs > 0 ? (executed * 1000) / totalMs : 0,
+      stateVersion: this.kernel.version
+    });
+  }
+
   stepOnce(request, description) {
     this.requireKernel();
     if (this.running) throw new Error('the session is running');
@@ -558,7 +579,12 @@ class DapServer {
           }
         }
         this.stepIndex++;
+        const startedAt = performance.now();
         await this.kernel.command(step);
+        const stepMs = performance.now() - startedAt;
+        this.stepStats.executed += 1;
+        this.stepStats.lastMs = stepMs;
+        this.stepStats.totalMs += stepMs;
         if (this.ended || this.closing) return;
         if (stepLine !== null) this.currentLine = stepLine;
         if (this.pauseRequested) {
