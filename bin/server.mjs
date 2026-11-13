@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
-import { evaluateExpression, parseVariableValue, valueKind, valueText } from '../lib/expressions.mjs';
+import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind, valueText } from '../lib/expressions.mjs';
 import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
 import { KernelSession } from '../lib/kernel.mjs';
 
@@ -95,6 +95,8 @@ class DapServer {
     this.breakpointsBySource = new Map();
     this.breakpointId = 0;
     this.exceptionFilters = [];
+    this.columnsStartAt1 = true;
+    this.exception = null;
     this.running = false;
     this.stopped = false;
     this.completed = false;
@@ -156,6 +158,7 @@ class DapServer {
     const args = message.arguments && typeof message.arguments === 'object' ? message.arguments : {};
     switch (message.command) {
       case 'initialize':
+        this.columnsStartAt1 = typeof args.columnsStartAt1 === 'boolean' ? args.columnsStartAt1 : true;
         this.sendResponse(message, true, CAPABILITIES);
         this.sendEvent('initialized');
         return;
@@ -190,6 +193,12 @@ class DapServer {
         return;
       case 'evaluate':
         this.evaluate(message, args);
+        return;
+      case 'completions':
+        this.completions(message, args);
+        return;
+      case 'exceptionInfo':
+        this.exceptionInfo(message);
         return;
       case 'continue':
         this.requireKernel();
@@ -256,6 +265,7 @@ class DapServer {
     this.skipLineBreakpoint = false;
     this.breakpointsBySource.clear();
     this.breakpointId = 0;
+    this.exception = null;
     this.sendResponse(request, true);
   }
 
@@ -410,10 +420,55 @@ class DapServer {
     });
   }
 
+  completions(request, args) {
+    this.requireKernel();
+    const text = args.text;
+    const column = args.column;
+    if (text !== undefined && typeof text !== 'string') {
+      throw new DapError('Bad completions: text must be a string', ERR_EXPRESSION);
+    }
+    if (column !== undefined && text === undefined) {
+      throw new DapError('Bad completions: column requires text', ERR_EXPRESSION);
+    }
+    if (column !== undefined) {
+      const min = this.columnsStartAt1 ? 1 : 0;
+      const max = text.length + (this.columnsStartAt1 ? 1 : 0);
+      if (!Number.isInteger(column) || column < min || column > max) {
+        throw new DapError('Bad completions: column is outside text', ERR_EXPRESSION);
+      }
+    }
+    let prefix = '';
+    if (text !== undefined) {
+      const caret = column === undefined ? text.length : column - (this.columnsStartAt1 ? 1 : 0);
+      prefix = /[A-Za-z_][A-Za-z0-9_]*$/.exec(text.slice(0, Math.max(0, caret)))?.[0] || '';
+    }
+    const targets = expressionIdentifiers(this.kernel.state)
+      .filter(name => name.startsWith(prefix))
+      .map(name => ({ label: name, type: 'variable', detail: valueKind(this.kernel.state[name]) }));
+    this.sendResponse(request, true, { targets });
+  }
+
+  exceptionInfo(request) {
+    if (!this.exception) {
+      this.sendResponse(request, true, {
+        exceptionId: '',
+        description: 'No active kernel exception',
+        breakMode: 'neverHalted'
+      });
+      return;
+    }
+    this.sendResponse(request, true, {
+      exceptionId: this.exception.filters[0] || this.exception.description,
+      description: this.exception.description,
+      breakMode: 'alwaysHalted'
+    });
+  }
+
   stepOnce(request, description) {
     this.requireKernel();
     if (this.running) throw new Error('the session is running');
     this.stopped = false;
+    this.exception = null;
     if (this.stepIndex >= this.steps.length) {
       this.sendResponse(request, true);
       this.emitTerminated();
@@ -453,6 +508,7 @@ class DapServer {
 
   startSteps(single = false, stopDescription = 'Completed one kernel step') {
     if (!this.kernel || this.running || this.ended || this.closing || this.completed) return;
+    this.exception = null;
     this.running = true;
     this.stopped = false;
     this.sendEvent('continued', { threadId: 1, allThreadsContinued: true });
@@ -532,6 +588,12 @@ class DapServer {
   }
 
   emitStopped(reason, detail = {}) {
+    if (reason === 'exception') {
+      this.exception = {
+        description: detail.description || reason,
+        filters: detail.filters ? [...detail.filters] : []
+      };
+    }
     const body = {
       reason,
       description: detail.description || reason,
@@ -564,6 +626,7 @@ class DapServer {
     this.kernel = null;
     this.breakpointsBySource.clear();
     this.exceptionFilters = [];
+    this.exception = null;
     this.steps = [];
     if (stepTask) await stepTask.catch(() => {});
     this.emitTerminated();
