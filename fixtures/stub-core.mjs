@@ -59,7 +59,12 @@ function dispatch(eventName, nodeId, text) {
   for (const action of actions) {
     if (!state.has(action.target)) throw new Error(`unknown state ${action.target}`);
     let value;
-    if (action.op === 'add') value = state.get(action.target) + Number(action.value);
+    if (action.op === 'add' || action.op === 'sub') {
+      const rhs = Number(action.valueFrom !== undefined ? state.get(action.valueFrom) : action.value);
+      value = action.op === 'sub'
+        ? state.get(action.target) - rhs
+        : state.get(action.target) + rhs;
+    }
     else if (action.op === 'toggle') value = !state.get(action.target);
     else if (action.op === 'set') {
       if (action.value !== undefined) value = action.value;
