@@ -32,16 +32,17 @@ DAP error response, and the server stays alive.
 ## Supported requests
 
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `configurationDone`,
-`threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `continue`, `next`,
-`stepIn`, `stepOut`, `pause`, `disconnect`. Unknown requests and malformed frames get proper DAP
-error responses without terminating the server. Events: `initialized`, `stopped`, `continued`,
-`terminated`.
+`threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
+`exceptionInfo`, `continue`, `next`, `stepIn`, `stepOut`, `pause`, `disconnect`. Unknown requests
+and malformed frames get proper DAP error responses without terminating the server. Events:
+`initialized`, `stopped`, `continued`, `terminated`.
 
 `initialize` advertises the standard DAP capabilities `supportsConfigurationDoneRequest`,
 `supportsEvaluateForHovers`, `supportsConditionalBreakpoints`, `supportsSetVariable`,
-`supportsVariablePaging`, `supportsExceptionFilterOptions` and `exceptionBreakpointFilters`
-(`all`, `uncaught`), plus three documented OPUROM extension flags that DAP has no boolean for:
-`supportsEvaluateExpressions`, `supportsStepInOutRequests`, `supportsVerifiedSourceBreakpoints`.
+`supportsVariablePaging`, `supportsExceptionFilterOptions`, `supportsCompletionsRequest`,
+`supportsExceptionInfoRequest` and `exceptionBreakpointFilters` (`all`, `uncaught`), plus three
+documented OPUROM extension flags that DAP has no boolean for: `supportsEvaluateExpressions`,
+`supportsStepInOutRequests`, `supportsVerifiedSourceBreakpoints`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -62,12 +63,24 @@ error responses.
 `setExceptionBreakpoints` accepts `filters` and `filterOptions` (`all`, `uncaught`), stores them,
 and an exception `stopped` event reports the armed filters. Unknown filters get a typed error.
 
+`exceptionInfo` reports the active kernel error recorded by the exception `stopped` event. Its
+`exceptionId` names the first armed filter, or the kernel error text when no filter is armed;
+`description` repeats the kernel error text, and `breakMode` is `alwaysHalted` while the exception
+is active. When no exception is active, the response has an empty `exceptionId` and
+`breakMode: neverHalted`.
+
 ### Expressions and variables
 
 `evaluate` parses a safe arithmetic/comparison expression over live state: state names, numbers,
 `+ - * / %`, parentheses, unary signs and `== != > < >= <=`. It never uses `eval`. For example
 `count * 2 + 1`. A bare state name returns its current value; malformed expressions, unknown names
 and non-finite results return a typed error and the server stays alive.
+
+`completions` returns `CompletionItem` objects for state names accepted by `evaluateExpression`.
+Each item carries `type: 'variable'` and a `detail` with the state value kind. `text` and `column`
+select the identifier prefix at the caret; when both are omitted, the full list is returned. The
+`column` base follows `columnsStartAt1` from `initialize`. Malformed `text` or `column` values
+return error id 2002.
 
 `setVariable` mutates a live state value by name. The new `value` string is decoded without
 changing the variable's type; an unknown name, wrong type or non-finite number returns a typed
@@ -93,7 +106,7 @@ behind.
 | 1001 | Generic request error. |
 | 1002 | Malformed DAP frame. |
 | 2001 | Invalid `setVariable` value or unknown variable. |
-| 2002 | Bad `evaluate` expression. |
+| 2002 | Bad `evaluate` expression or malformed `completions` arguments. |
 | 2003 | Invalid / out-of-range `variables` page or unknown reference. |
 | 2004 | Unknown or malformed breakpoint or exception filter. |
 
@@ -106,10 +119,12 @@ node --test
 The suite drives real Content-Length-framed DAP sessions over stdio against the counter IR and a
 multi-variable IR, using the real `opurom-core` debug binary when available plus a checked-in
 protocol-compatible stub so it stays self-contained. It covers every request, the error paths (bad
-expression, invalid variable, unknown breakpoint, out-of-range page), session cleanup with no
-leftover child processes, and a full `initialize -> launch -> setBreakpoints -> configurationDone
--> hit -> evaluate -> setVariable -> stepIn -> stepOut -> continue -> disconnect` flow. Set
-`OPR_TRANSCRIPT_FILE` to write that full framed transcript to a file for inspection.
+expression, malformed completions arguments, invalid variable, unknown breakpoint, out-of-range
+page), completion labels and prefix filtering, `exceptionInfo` with and without an active
+exception, initialize capability equality, session cleanup with no leftover child processes, and a
+full `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
+-> stepIn -> stepOut -> continue -> disconnect` flow. Set `OPR_TRANSCRIPT_FILE` to write that full
+framed transcript to a file for inspection.
 
 ## Scope
 

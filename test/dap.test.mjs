@@ -8,8 +8,8 @@ import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
 import { parseKernelLine } from '../lib/kernel.mjs';
-import { CAPABILITIES } from '../lib/capabilities.mjs';
-import { evaluateExpression, parseVariableValue, valueKind } from '../lib/expressions.mjs';
+import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
+import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind } from '../lib/expressions.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverPath = path.join(root, 'bin', 'server.mjs');
@@ -374,6 +374,7 @@ test('initialize advertises the full DAP capability set', async t => {
   assert.deepEqual(init.body, CAPABILITIES);
   for (const key of [
     'supportsSetVariable', 'supportsVariablePaging', 'supportsExceptionFilterOptions',
+    'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints'
   ]) {
     assert.equal(init.body[key], true, key);
@@ -403,6 +404,73 @@ test('expression evaluator computes arithmetic and validates input', () => {
   assert.match(parseVariableValue('nope', 4).error, /expected number/);
   assert.match(parseVariableValue('true', 4).error, /expected number/);
   assert.equal(valueKind(null), 'null');
+});
+
+test('completions returns evaluatable state names and filters by prefix', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', { program: multiPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const variables = await client.request('variables', { variablesReference: 1 });
+  assert.equal(variables.success, true, variables.message);
+  const state = Object.fromEntries(
+    variables.body.variables.map(variable => [variable.name, Number(variable.value)])
+  );
+  const all = await client.request('completions');
+  assert.equal(all.success, true, all.message);
+  const labels = all.body.targets.map(target => target.label);
+  assert.deepEqual(labels, expressionIdentifiers(state));
+  for (const target of all.body.targets) {
+    assert.equal(target.type, 'variable', target.label);
+    assert.equal(target.detail, valueKind(state[target.label]), target.label);
+    assert.doesNotThrow(() => evaluateExpression(target.label, state), target.label);
+  }
+  const alpha = await client.request('completions', { text: 'al', column: 3 });
+  assert.equal(alpha.success, true, alpha.message);
+  assert.deepEqual(alpha.body.targets.map(target => target.label), ['alpha']);
+  const beta = await client.request('completions', { text: 'count + be', column: 11 });
+  assert.equal(beta.success, true, beta.message);
+  assert.deepEqual(beta.body.targets.map(target => target.label), ['beta']);
+  const none = await client.request('completions', { text: 'z', column: 2 });
+  assert.equal(none.success, true, none.message);
+  assert.deepEqual(none.body.targets, []);
+  const empty = await client.request('completions', { text: '', column: 1 });
+  assert.equal(empty.success, true, empty.message);
+  assert.deepEqual(empty.body.targets.map(target => target.label), labels);
+  await finish(client);
+
+  const zeroBased = startServer(t);
+  await zeroBased.request('initialize', { adapterID: 'opurom', columnsStartAt1: false });
+  const zeroLaunch = await zeroBased.request('launch', { program: multiPath, steps: [], coreBinary: stubCore });
+  assert.equal(zeroLaunch.success, true, zeroLaunch.message);
+  const gamma = await zeroBased.request('completions', { text: 'ga', column: 2 });
+  assert.equal(gamma.success, true, gamma.message);
+  assert.deepEqual(gamma.body.targets.map(target => target.label), ['gamma']);
+  await finish(zeroBased);
+});
+
+test('malformed completions arguments return a typed error and keep the server alive', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', { program: multiPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const invalid = [
+    { text: 42, column: 1 },
+    { text: 'a', column: '1' },
+    { text: 'a', column: -1 },
+    { text: 'a', column: 0 },
+    { text: 'a', column: 99 },
+    { column: 1 }
+  ];
+  for (const args of invalid) {
+    const response = await client.request('completions', args);
+    assert.equal(response.success, false, JSON.stringify(args));
+    assert.equal(response.body.error.id, 2002, JSON.stringify(args));
+    assert.match(response.message, /Bad completions/);
+  }
+  const alive = await client.request('threads');
+  assert.equal(alive.success, true);
+  await finish(client);
 });
 
 test('evaluate computes arithmetic expressions over live state', async t => {
@@ -527,6 +595,45 @@ test('setExceptionBreakpoints stores filters and reports unknown ones', async t 
   const stopped = await client.waitForEvent('stopped', m => m.body.reason === 'exception', 'exception stop');
   assert.deepEqual(stopped.body.filters, ['all']);
   assert.match(stopped.body.text, /unknown command/);
+  await finish(client);
+});
+
+test('exceptionInfo reports active kernel exceptions and filter state', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const idle = await client.request('exceptionInfo', { threadId: 1 });
+  assert.equal(idle.success, true, idle.message);
+  assert.equal(idle.body.exceptionId, '');
+  assert.equal(idle.body.breakMode, 'neverHalted');
+  assert.equal(typeof idle.body.description, 'string');
+
+  const filter = EXCEPTION_FILTERS[1].filter;
+  const armed = await client.request('setExceptionBreakpoints', { filters: [filter] });
+  assert.equal(armed.success, true, armed.message);
+  assert.deepEqual(armed.body.filters, [filter]);
+  const launch = await client.request('launch', { program: irPath, steps: ['bogus'], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const configured = await client.request('configurationDone');
+  assert.equal(configured.success, true, configured.message);
+  const stopped = await client.waitForEvent('stopped', m => m.body.reason === 'exception', 'exception stop');
+  assert.deepEqual(stopped.body.filters, [filter]);
+  assert.match(stopped.body.text, /unknown command/);
+
+  const active = await client.request('exceptionInfo', { threadId: 1 });
+  assert.equal(active.success, true, active.message);
+  assert.equal(typeof active.body.exceptionId, 'string');
+  assert.ok(EXCEPTION_FILTERS.some(entry => entry.filter === active.body.exceptionId));
+  assert.equal(active.body.exceptionId, filter);
+  assert.equal(active.body.description, stopped.body.text);
+  assert.equal(active.body.breakMode, 'alwaysHalted');
+
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after exception');
+  const cleared = await client.request('exceptionInfo', { threadId: 1 });
+  assert.equal(cleared.success, true, cleared.message);
+  assert.equal(cleared.body.exceptionId, '');
+  assert.equal(cleared.body.breakMode, 'neverHalted');
   await finish(client);
 });
 
