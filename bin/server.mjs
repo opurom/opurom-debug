@@ -216,6 +216,9 @@ class DapServer {
       case 'opurom/frameStats':
         this.frameStats(message);
         return;
+      case 'opurom/sessionLog':
+        this.sessionLog(message);
+        return;
       case 'continue':
         this.requireKernel();
         this.stopped = false;
@@ -552,6 +555,17 @@ class DapServer {
       lastStepMs: lastMs,
       avgStepMs: executed ? totalMs / executed : 0,
       stepsPerSecond: totalMs > 0 ? (executed * 1000) / totalMs : 0,
+      stateVersion: this.kernel.version
+    });
+  }
+
+  // The kernel speaks a plain line protocol on stdin/stdout; these are the exact
+  // state/patches/error lines it produced for this session, unmodified.
+  sessionLog(request) {
+    this.requireKernel();
+    this.sendResponse(request, true, {
+      lines: [...this.kernel.log],
+      count: this.kernel.log.length,
       stateVersion: this.kernel.version
     });
   }
