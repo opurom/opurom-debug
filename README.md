@@ -38,11 +38,12 @@ and malformed frames get proper DAP error responses without terminating the serv
 `initialized`, `stopped`, `continued`, `terminated`.
 
 `initialize` advertises the standard DAP capabilities `supportsConfigurationDoneRequest`,
-`supportsEvaluateForHovers`, `supportsConditionalBreakpoints`, `supportsSetVariable`,
-`supportsVariablePaging`, `supportsExceptionFilterOptions`, `supportsCompletionsRequest`,
-`supportsExceptionInfoRequest` and `exceptionBreakpointFilters` (`all`, `uncaught`), plus three
-documented OPUROM extension flags that DAP has no boolean for: `supportsEvaluateExpressions`,
-`supportsStepInOutRequests`, `supportsVerifiedSourceBreakpoints`.
+`supportsEvaluateForHovers`, `supportsConditionalBreakpoints`,
+`supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
+`supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest` and
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus three documented OPUROM extension flags
+that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
+`supportsVerifiedSourceBreakpoints`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -51,6 +52,13 @@ response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 State-condition breakpoints use `name OP number` with `==`, `!=`, `>`, `<`, `>=`, `<=`, and are
 evaluated against real kernel state after each step. The `stopped` event uses reason `breakpoint`
 with the matched text and `hitBreakpointIds`.
+
+Hit-count breakpoints use `hitCondition` as a positive integer, for example `"3"`. A hit is one
+kernel step that matches the breakpoint's condition or source line; a breakpoint with only a hit
+count is hit once per kernel step. The breakpoint pauses on that exact hit and stays silent
+afterwards, including across `continue` and step requests. Conditions and hit counts can be
+combined. Invalid hit counts (zero, negatives, non-integers or expressions such as `>= 3`) are
+reported `verified: false` with an `Unsupported hit condition` message and never pause.
 
 Source breakpoints set a `line` on the launched IR file's `source`. A line is `verified` only when
 it declares an IR node id in the program text: the adapter builds a node-id to text-line map from
@@ -119,10 +127,11 @@ node --test
 The suite drives real Content-Length-framed DAP sessions over stdio against the counter IR and a
 multi-variable IR, using the real `opurom-core` debug binary when available plus a checked-in
 protocol-compatible stub so it stays self-contained. It covers every request, the error paths (bad
-expression, malformed completions arguments, invalid variable, unknown breakpoint, out-of-range
-page), completion labels and prefix filtering, `exceptionInfo` with and without an active
-exception, initialize capability equality, session cleanup with no leftover child processes, and a
-full `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
+expression, malformed completions arguments, invalid variable, invalid hit condition, unknown
+breakpoint, out-of-range page), completion labels and prefix filtering, `exceptionInfo` with and
+without an active exception, exact hit counts over several stub-kernel state changes, initialize
+capability equality, session cleanup with no leftover child processes, and a full
+`initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
 -> stepIn -> stepOut -> continue -> disconnect` flow. Set `OPR_TRANSCRIPT_FILE` to write that full
 framed transcript to a file for inspection.
 
@@ -136,4 +145,6 @@ command, so the next kernel step may overwrite the value. Source lines come from
 declarations in the program JSON, not from a compiled source map or an `.opu` text file. There is
 a single thread and one stack frame, and `pause` takes effect at a kernel command boundary.
 `launch` may be called more than once so all-session cleanup can be tested, but only one kernel
-is active at a time.
+is active at a time. Hit counts accept exact positive integers only; DAP comparison expressions
+such as `>= 3` are rejected with a diagnostic. A `setBreakpoints` call replaces a source's
+breakpoints, which resets their hit counters.
