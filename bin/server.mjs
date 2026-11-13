@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
+import { parseHitCount } from '../lib/hitcounts.mjs';
 import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind, valueText } from '../lib/expressions.mjs';
 import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
 import { KernelSession } from '../lib/kernel.mjs';
@@ -284,6 +285,8 @@ class DapServer {
       const line = hasLine ? bp.line : null;
       const conditionText = typeof bp.condition === 'string' ? bp.condition.trim() : '';
       const condition = conditionText ? parseCondition(conditionText) : null;
+      const hasHitCondition = bp.hitCondition !== undefined && bp.hitCondition !== null;
+      const hitCount = hasHitCondition ? parseHitCount(bp.hitCondition) : null;
       const reportedBp = { id, verified: true };
       if (line !== null) {
         reportedBp.line = line;
@@ -292,16 +295,18 @@ class DapServer {
       let message = null;
       if (conditionText && !condition) {
         message = `Unsupported condition: ${conditionText}`;
+      } else if (hasHitCondition && hitCount === null) {
+        message = `Unsupported hit condition: ${JSON.stringify(bp.hitCondition)}; expected a positive integer`;
       } else if (line !== null && !this.breakableLines.has(line)) {
         message = `Unknown breakpoint line ${line}: no executable IR node on that line`;
-      } else if (line === null && !condition) {
-        message = 'A state condition or source line is required';
+      } else if (line === null && !condition && hitCount === null) {
+        message = 'A state condition, source line or hit count is required';
       }
       if (message) {
         reportedBp.verified = false;
         reportedBp.message = message;
       } else {
-        accepted.push({ id, source, line, condition, text: conditionText });
+        accepted.push({ id, source, line, condition, text: conditionText, hitCount, hits: 0 });
       }
       return reportedBp;
     });
@@ -494,16 +499,28 @@ class DapServer {
     return list;
   }
 
+  // Count every hit of each matching breakpoint so exact counts survive continue
+  // and stepping; without a hit condition a breakpoint still fires on every hit.
+  matchedBreakpoint(matches) {
+    let firing = null;
+    for (const record of this.allBreakpoints()) {
+      if (!matches(record)) continue;
+      record.hits += 1;
+      if (!firing && (record.hitCount === null || record.hits === record.hitCount)) firing = record;
+    }
+    return firing;
+  }
+
   matchedConditionBreakpoint() {
-    return this.allBreakpoints().find(record =>
-      record.line === null && record.condition && matchesCondition(record.condition, this.kernel.state)
-    ) || null;
+    return this.matchedBreakpoint(record =>
+      record.line === null && (!record.condition || matchesCondition(record.condition, this.kernel.state))
+    );
   }
 
   lineBreakpointAt(line) {
-    return this.allBreakpoints().find(record =>
+    return this.matchedBreakpoint(record =>
       record.line === line && (!record.condition || matchesCondition(record.condition, this.kernel.state))
-    ) || null;
+    );
   }
 
   startSteps(single = false, stopDescription = 'Completed one kernel step') {
@@ -554,9 +571,11 @@ class DapServer {
         if (condition) {
           this.stopped = true;
           this.emitStopped('breakpoint', {
-            description: `State breakpoint matched: ${condition.text}`,
-            text: condition.text,
-            condition: condition.text,
+            description: condition.hitCount !== null
+              ? `State breakpoint hit ${condition.hits} times${condition.text ? `: ${condition.text}` : ''}`
+              : `State breakpoint matched: ${condition.text}`,
+            text: condition.text || undefined,
+            condition: condition.text || undefined,
             hitBreakpointIds: [condition.id]
           });
           return;

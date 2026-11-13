@@ -7,6 +7,7 @@ import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
+import { parseHitCount } from '../lib/hitcounts.mjs';
 import { parseKernelLine } from '../lib/kernel.mjs';
 import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
 import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind } from '../lib/expressions.mjs';
@@ -304,6 +305,16 @@ test('condition grammar evaluates numeric kernel state', () => {
   assert.equal(matchesCondition(parseCondition('missing == 3'), state), false);
 });
 
+test('hit count grammar accepts exact positive counts', () => {
+  assert.equal(parseHitCount('1'), 1);
+  assert.equal(parseHitCount(' 3 '), 3);
+  assert.equal(parseHitCount(4), 4);
+  for (const value of ['0', '-1', '2.5', '>= 2', '', '3x', 'third',
+    '99999999999999999999', null, undefined, true, 0, -2, 2.5]) {
+    assert.equal(parseHitCount(value), null, String(value));
+  }
+});
+
 test('kernel output lines expose state and patch arrays', () => {
   assert.deepEqual(parseKernelLine('state [{"name":"count","value":2}] version 2'), {
     kind: 'state',
@@ -375,6 +386,7 @@ test('initialize advertises the full DAP capability set', async t => {
   for (const key of [
     'supportsSetVariable', 'supportsVariablePaging', 'supportsExceptionFilterOptions',
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
+    'supportsHitConditionalBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints'
   ]) {
     assert.equal(init.body[key], true, key);
@@ -781,4 +793,141 @@ test('full DAP session flow produces a framed transcript', async t => {
   assert.ok(transcript.includes('"event":"terminated"'));
   // Opt-in only: writing an artifact never happens during a normal `node --test`.
   if (process.env.OPR_TRANSCRIPT_FILE) fs.writeFileSync(process.env.OPR_TRANSCRIPT_FILE, transcript);
+});
+
+test('exact hit count pauses on the third stub kernel state change', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath,
+    steps: ['tap 4', 'tap 4', 'tap 4', 'tap 4', 'tap 4'],
+    coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const sb = await client.request('setBreakpoints', {
+    source: { path: irPath }, breakpoints: [{ hitCondition: '3' }]
+  });
+  assert.equal(sb.success, true, sb.message);
+  assert.equal(sb.body.breakpoints.length, 1);
+  assert.equal(sb.body.breakpoints[0].verified, true);
+  await client.request('configurationDone');
+  const stopped = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'breakpoint', 'third hit'
+  );
+  assert.equal(stopped.body.stateVersion, 3);
+  assert.match(stopped.body.description, /hit 3 times/);
+  assert.equal(stopped.body.condition, undefined);
+  assert.deepEqual(stopped.body.hitBreakpointIds, [sb.body.breakpoints[0].id]);
+  const atStop = await client.request('variables', { variablesReference: 1 });
+  assert.equal(atStop.body.variables.find(v => v.name === 'count').value, '3');
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 1);
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after the exact hit');
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '5');
+  assert.equal(final.body.stateVersion, 5);
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 1);
+  await finish(client);
+});
+
+test('hit count with a state condition counts only matching states', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath,
+    steps: ['tap 4', 'tap 4', 'tap 4', 'tap 4', 'tap 4'],
+    coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const sb = await client.request('setBreakpoints', {
+    source: { path: irPath }, breakpoints: [{ condition: 'count >= 3', hitCondition: '2' }]
+  });
+  assert.equal(sb.body.breakpoints[0].verified, true, sb.body.breakpoints[0].message);
+  await client.request('configurationDone');
+  const stopped = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'breakpoint', 'second matching hit'
+  );
+  assert.equal(stopped.body.stateVersion, 4);
+  assert.equal(stopped.body.condition, 'count >= 3');
+  assert.match(stopped.body.description, /hit 2 times: count >= 3/);
+  assert.deepEqual(stopped.body.hitBreakpointIds, [sb.body.breakpoints[0].id]);
+  const atStop = await client.request('variables', { variablesReference: 1 });
+  assert.equal(atStop.body.variables.find(v => v.name === 'count').value, '4');
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 1);
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after later hits');
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '5');
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 1);
+  await finish(client);
+});
+
+test('source line hit count pauses on its exact hit', async t => {
+  const line4 = sourceLineOfNode(irPath, 4);
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const sb = await client.request('setBreakpoints', {
+    source: { path: irPath }, breakpoints: [{ line: line4, hitCondition: '2' }]
+  });
+  assert.equal(sb.body.breakpoints[0].verified, true, sb.body.breakpoints[0].message);
+  await client.request('configurationDone');
+  const stopped = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'breakpoint', 'second line hit'
+  );
+  assert.equal(stopped.body.line, line4);
+  assert.equal(stopped.body.source.path, irPath);
+  assert.equal(stopped.body.stateVersion, 1);
+  assert.deepEqual(stopped.body.hitBreakpointIds, [sb.body.breakpoints[0].id]);
+  const atStop = await client.request('variables', { variablesReference: 1 });
+  assert.equal(atStop.body.variables.find(v => v.name === 'count').value, '1');
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after the third line hit');
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '3');
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 1);
+  await finish(client);
+});
+
+test('invalid hit conditions are rejected with a diagnostic and never pause', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const breakpoints = [
+    { hitCondition: '0' },
+    { hitCondition: '-1' },
+    { hitCondition: '2.5' },
+    { hitCondition: '>= 2' },
+    { hitCondition: '' },
+    { hitCondition: 'third' },
+    { hitCondition: '99999999999999999999' },
+    { hitCondition: 2.5 },
+    { hitCondition: true },
+    { condition: 'count == 2', hitCondition: 'x' }
+  ];
+  const sb = await client.request('setBreakpoints', { source: { path: irPath }, breakpoints });
+  assert.equal(sb.success, true, sb.message);
+  assert.equal(sb.body.breakpoints.length, breakpoints.length);
+  for (const bp of sb.body.breakpoints) {
+    assert.equal(bp.verified, false, JSON.stringify(bp));
+    assert.match(bp.message, /Unsupported hit condition/);
+    assert.match(bp.message, /positive integer/);
+  }
+  await client.request('configurationDone');
+  await client.waitForEvent('terminated', () => true, 'terminated with no accepted breakpoints');
+  assert.equal(client.events.filter(e => e.event === 'stopped' && e.body.reason === 'breakpoint').length, 0);
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '3');
+  const alive = await client.request('threads');
+  assert.equal(alive.success, true);
+  await finish(client);
 });
