@@ -388,7 +388,7 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
     'supportsHitConditionalBreakpoints', 'supportsDataBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
-    'supportsFrameStatsRequest'
+    'supportsFrameStatsRequest', 'supportsSessionLogRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -1173,5 +1173,77 @@ test('data breakpoint validation rejects unknown ids and non-write access', asyn
   assert.equal(client.events.filter(e => e.event === 'stopped').length, 0);
   const alive = await client.request('threads');
   assert.equal(alive.success, true);
+  await finish(client);
+});
+
+test('sessionLog returns the exact kernel protocol lines seen so far', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/sessionLog');
+  assert.equal(before.success, false);
+  assert.equal(before.body.error.id, 1001);
+  assert.match(before.message, /launch a kernel session/);
+
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const initial = await client.request('opurom/sessionLog');
+  assert.equal(initial.success, true, initial.message);
+  assert.equal(initial.body.count, 1);
+  assert.equal(initial.body.stateVersion, 0);
+  assert.deepEqual(initial.body.lines, ['state [{"name":"count","value":0}] version 0']);
+
+  await client.request('setBreakpoints', { source: { path: irPath }, breakpoints: [{ condition: 'count == 2' }] });
+  await client.request('configurationDone');
+  await client.waitForEvent('stopped', m => m.body.reason === 'breakpoint', 'breakpoint hit');
+  const atStop = await client.request('opurom/sessionLog');
+  assert.equal(atStop.success, true, atStop.message);
+  assert.equal(atStop.body.count, 3);
+  assert.equal(atStop.body.stateVersion, 2);
+  assert.deepEqual(atStop.body.lines, [
+    'state [{"name":"count","value":0}] version 0',
+    'patches [{"name":"count","value":1}] version 1',
+    'patches [{"name":"count","value":2}] version 2'
+  ]);
+
+  // Repeating the request yields byte-identical lines: the stream is deterministic.
+  const again = await client.request('opurom/sessionLog');
+  assert.deepEqual(again.body, atStop.body);
+
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const final = await client.request('opurom/sessionLog');
+  assert.equal(final.body.count, 4);
+  assert.equal(final.body.stateVersion, 3);
+  assert.equal(final.body.lines[3], 'patches [{"name":"count","value":3}] version 3');
+  await finish(client);
+});
+
+test('sessionLog records kernel error lines and resets on the next launch', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', { program: irPath, steps: ['bogus'], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  await client.request('configurationDone');
+  await client.waitForEvent('stopped', m => m.body.reason === 'exception', 'kernel error stop');
+  const errored = await client.request('opurom/sessionLog');
+  assert.equal(errored.success, true, errored.message);
+  assert.equal(errored.body.count, 2);
+  assert.deepEqual(errored.body.lines, [
+    'state [{"name":"count","value":0}] version 0',
+    'error: unknown command bogus'
+  ]);
+
+  const relaunch = await client.request('launch', {
+    program: multiPath, steps: [], coreBinary: stubCore
+  });
+  assert.equal(relaunch.success, true, relaunch.message);
+  const reset = await client.request('opurom/sessionLog');
+  assert.equal(reset.success, true, reset.message);
+  assert.equal(reset.body.count, 1);
+  assert.deepEqual(reset.body.lines, [
+    'state [{"name":"alpha","value":1},{"name":"beta","value":2},{"name":"gamma","value":3},{"name":"delta","value":4}] version 0'
+  ]);
   await finish(client);
 });

@@ -34,7 +34,8 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `continue`, `next`, `stepIn`, `stepOut`, `pause`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `continue`, `next`, `stepIn`, `stepOut`,
+`pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
 `initialized`, `stopped`, `continued`, `terminated`.
@@ -44,9 +45,9 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
 `supportsDataBreakpoints` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus four documented OPUROM extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus five documented OPUROM extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
-`supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`.
+`supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -138,6 +139,16 @@ behind.
 times it), the derived `stepsPerSecond`, and the current kernel `stateVersion`. The counters come
 from timing the adapter's own kernel commands, describe exactly the current session, and reset at
 each `launch`. The request requires a launched kernel and returns a typed error before one.
+
+## Session log
+
+`opurom/sessionLog` returns the kernel protocol lines the adapter has read for the current
+session in arrival order: `lines` is the exact sequence of `state [...]` and `patches [...]`
+lines the kernel printed, plus any `error: ...` lines. `count` is the line total and
+`stateVersion` is the current kernel version. The adapter stores the lines verbatim while it
+parses them, so this request exposes the real kernel stream rather than a re-rendered summary
+and needs no additional kernel command. The request requires a launched kernel and returns a
+typed error before one; the log resets at each `launch`.
 
 ## Typed errors
 
