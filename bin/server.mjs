@@ -17,6 +17,9 @@ const ERR_VARIABLE = 2001;
 const ERR_EXPRESSION = 2002;
 const ERR_PAGE = 2003;
 const ERR_BREAKPOINT = 2004;
+const ERR_SCOPE = 2005;
+
+const FRAME_ID = 1;
 
 const KNOWN_EXCEPTION_FILTERS = new Set(EXCEPTION_FILTERS.map(entry => entry.filter));
 
@@ -185,7 +188,7 @@ class DapServer {
         this.stackTrace(message);
         return;
       case 'scopes':
-        this.scopes(message);
+        this.scopes(message, args);
         return;
       case 'variables':
         this.variables(message, args);
@@ -337,7 +340,7 @@ class DapServer {
     const source = this.sourcePath || this.program || 'OPUROM state';
     this.sendResponse(request, true, {
       stackFrames: [{
-        id: 1,
+        id: FRAME_ID,
         name: 'OPUROM state',
         source: { name: path.basename(source), path: source },
         line: this.currentLine || 1,
@@ -348,13 +351,16 @@ class DapServer {
     });
   }
 
-  scopes(request) {
-    const state = this.kernel?.state || {};
+  scopes(request, args) {
+    this.requireKernel();
+    if (Number(args.frameId) !== FRAME_ID) {
+      throw new DapError(`Unknown scopes frame reference: ${String(args.frameId)}`, ERR_SCOPE);
+    }
     this.sendResponse(request, true, {
       scopes: [{
         name: 'Kernel state',
         variablesReference: 1,
-        namedVariables: Object.keys(state).length,
+        namedVariables: Object.keys(this.kernel.state).length,
         expensive: false,
         presentationHint: 'locals'
       }]

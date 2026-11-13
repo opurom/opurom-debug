@@ -80,6 +80,12 @@ is active. When no exception is active, the response has an empty `exceptionId` 
 
 ### Expressions and variables
 
+`scopes` requires a launched kernel and a `frameId` matching the sole stack frame (`1`). It returns
+one `Kernel state` scope whose `namedVariables` reflects the live state; a following `variables`
+request lists each state name with its current `value` and `type`, and those values track every step
+and `continue`. An unknown or missing `frameId`, or a `scopes` request before `launch`, returns a
+typed error (id 2005) rather than an empty success.
+
 `evaluate` parses a safe arithmetic/comparison expression over live state: state names, numbers,
 `+ - * / %`, parentheses, unary signs and `== != > < >= <=`. It never uses `eval`. For example
 `count * 2 + 1`. A bare state name returns its current value; malformed expressions, unknown names
@@ -127,6 +133,7 @@ each `launch`. The request requires a launched kernel and returns a typed error 
 | 2002 | Bad `evaluate` expression or malformed `completions` arguments. |
 | 2003 | Invalid / out-of-range `variables` page or unknown reference. |
 | 2004 | Unknown or malformed breakpoint or exception filter. |
+| 2005 | Unknown or missing `scopes` frame reference. |
 
 ## Verify
 

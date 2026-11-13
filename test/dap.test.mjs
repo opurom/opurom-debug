@@ -587,6 +587,104 @@ test('variables paging returns slices and rejects out-of-range pages', async t =
   await finish(client);
 });
 
+test('scopes lists typed live state that tracks every step and continue', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath,
+    steps: ['tap 4', 'tap 4', 'tap 4', 'tap 4', 'tap 4'],
+    coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+
+  const scopes = await client.request('scopes', { frameId: 1 });
+  assert.equal(scopes.success, true, scopes.message);
+  assert.equal(scopes.body.scopes.length, 1);
+  const scope = scopes.body.scopes[0];
+  assert.equal(scope.name, 'Kernel state');
+  assert.equal(scope.variablesReference, 1);
+  assert.equal(scope.namedVariables, 1);
+  assert.equal(scope.presentationHint, 'locals');
+
+  const countAt = async () => {
+    const response = await client.request('variables', { variablesReference: 1 });
+    assert.equal(response.success, true, response.message);
+    const count = response.body.variables.find(variable => variable.name === 'count');
+    assert.ok(count);
+    return { count, version: response.body.stateVersion };
+  };
+
+  let { count, version } = await countAt();
+  assert.equal(count.value, '0');
+  assert.equal(count.type, 'number');
+  assert.equal(version, 0);
+
+  for (let step = 1; step <= 3; step++) {
+    const next = await client.request('next', { threadId: 1 });
+    assert.equal(next.success, true, next.message);
+    await client.waitForEvent(
+      'stopped',
+      message => message.body.reason === 'step' && message.body.stateVersion === step,
+      `step ${step} stopped event`
+    );
+    ({ count, version } = await countAt());
+    assert.equal(count.value, String(step), `count after step ${step}`);
+    assert.equal(count.type, 'number');
+    assert.equal(version, step);
+  }
+
+  const continued = await client.request('continue', { threadId: 1 });
+  assert.equal(continued.success, true, continued.message);
+  await client.waitForEvent('terminated', () => true, 'terminated after continue');
+  ({ count, version } = await countAt());
+  assert.equal(count.value, '5');
+  assert.equal(count.type, 'number');
+  assert.equal(version, 5);
+  await finish(client);
+});
+
+test('scopes rejects unknown frame references and unlaunched sessions', async t => {
+  const client = startServer(t);
+  await initialize(client);
+
+  const beforeLaunch = await client.request('scopes', { frameId: 1 });
+  assert.equal(beforeLaunch.success, false);
+  assert.equal(beforeLaunch.body.error.id, 1001);
+  assert.match(beforeLaunch.message, /launch a kernel session/);
+  assert.equal(beforeLaunch.body.scopes, undefined);
+
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+
+  const valid = await client.request('scopes', { frameId: 1 });
+  assert.equal(valid.success, true, valid.message);
+  assert.equal(valid.body.scopes[0].namedVariables, 1);
+
+  const invalidFrames = [
+    { frameId: 999 },
+    { frameId: 2 },
+    { frameId: 0 },
+    { frameId: -1 },
+    { frameId: 1.5 },
+    { frameId: 'x' },
+    { frameId: null },
+    {}
+  ];
+  for (const args of invalidFrames) {
+    const response = await client.request('scopes', args);
+    assert.equal(response.success, false, JSON.stringify(args));
+    assert.equal(response.body.error.id, 2005, JSON.stringify(args));
+    assert.match(response.message, /Unknown scopes frame reference/, JSON.stringify(args));
+    assert.equal(response.body.scopes, undefined, JSON.stringify(args));
+  }
+
+  const alive = await client.request('threads');
+  assert.equal(alive.success, true);
+  await finish(client);
+});
+
 test('setExceptionBreakpoints stores filters and reports unknown ones', async t => {
   const client = startServer(t);
   const init = await initialize(client);
