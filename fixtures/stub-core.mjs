@@ -27,6 +27,20 @@ if (ir.ir !== '0.1' || !Array.isArray(ir.state) || !ir.tree) {
   console.error('error: invalid IR v0.1');
   process.exit(1);
 }
+// Mirror the kernel's closed IR event name set.
+const EVENT_NAMES = new Set(['tap', 'input', 'doubleTap', 'longPress', 'drag']);
+const validateEvents = (node, at) => {
+  for (const [event] of Object.entries(node.events || {})) {
+    if (!EVENT_NAMES.has(event)) {
+      console.error(`error: invalid IR: ${at}.events.${event}: unknown event name (expected tap|input|doubleTap|longPress|drag)`);
+      process.exit(1);
+    }
+  }
+  for (const [index, child] of (node.children || []).entries()) {
+    validateEvents(child, `${at}.children[${index}]`);
+  }
+};
+validateEvents(ir.tree, 'root.tree');
 
 const state = new Map(ir.state.map(entry => [entry.name, entry.init]));
 const nodes = new Map();

@@ -1465,3 +1465,15 @@ test('extension commands read the real kernel protocol when it is available', as
 
   await finish(client);
 });
+
+test('stub kernel enforces the closed IR event name set', () => {
+  // The real kernel rejects undeclared event names; the protocol-compatible
+  // stub must fail the same way instead of silently accepting them.
+  const bad = path.join(root, 'test', 'fixtures', 'unknown-event.opuir.json');
+  const run = spawnSync(process.execPath, [stubCore, bad], {
+    input: 'state\nquit\n', encoding: 'utf8'
+  });
+  assert.equal(run.status, 1, run.stderr);
+  assert.match(run.stderr, /unknown event name/);
+  assert.match(run.stderr, /tap\|input\|doubleTap\|longPress\|drag/);
+});
