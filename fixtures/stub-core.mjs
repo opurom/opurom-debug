@@ -77,6 +77,12 @@ function dispatch(eventName, nodeId, text) {
   if (actions.length === 0) throw new Error(`node ${nodeId} has no ${eventName} handler`);
   const patches = [];
   for (const action of actions) {
+    // A push is a navigation signal: no state mutation, just the reserved
+    // `@nav` patch the real kernel emits.
+    if (action.op === 'push') {
+      patches.push({ name: '@nav', value: action.target });
+      continue;
+    }
     if (!state.has(action.target)) throw new Error(`unknown state ${action.target}`);
     let value;
     if (action.op === 'add' || action.op === 'sub') {

@@ -34,7 +34,7 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -164,6 +164,15 @@ re-rendered summary. The request requires a launched kernel and returns a typed 
 record per request, in invocation order. The adapter reads it live over a `network` kernel command,
 so the capture reflects the running session rather than a local mirror. The request requires a
 launched kernel and returns a typed error before one.
+
+## Navigation history
+
+`opurom/navigation` returns the page navigation signals of the running session:
+`navigations` is one `{page, version}` record per `@nav` patch, in arrival order, and
+`count` is the total. The kernel emits `@nav` for each `push` action without mutating
+state, so the adapter records it separately from the state mirror; `stateVersion` is
+the kernel version at the time of the request. The request requires a launched kernel
+and returns a typed error before one.
 
 ## Session log
 

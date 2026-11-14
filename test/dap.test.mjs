@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
 import { parseHitCount } from '../lib/hitcounts.mjs';
-import { parseKernelLine } from '../lib/kernel.mjs';
+import { parseKernelLine, KernelSession } from '../lib/kernel.mjs';
 import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
 import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind } from '../lib/expressions.mjs';
 
@@ -1331,5 +1331,49 @@ test('sessionLog records kernel error lines and resets on the next launch', asyn
   assert.deepEqual(reset.body.lines, [
     'state [{"name":"alpha","value":1},{"name":"beta","value":2},{"name":"gamma","value":3},{"name":"delta","value":4}] version 0'
   ]);
+  await finish(client);
+});
+
+test('kernel session records @nav signals without polluting state', () => {
+  const session = new KernelSession('unused', 'unused');
+  session.onLine('state [{"name":"count","value":0}] version 0');
+  session.onLine('patches [{"name":"@nav","value":"Settings"}] version 1');
+  session.onLine('patches [{"name":"count","value":1},{"name":"@nav","value":"Profile"}] version 2');
+  assert.deepEqual(session.state, { count: 1 });
+  assert.equal(Object.hasOwn(session.state, '@nav'), false);
+  assert.deepEqual(session.navigation, [
+    { page: 'Settings', version: 1 },
+    { page: 'Profile', version: 2 }
+  ]);
+});
+
+test('navigation inspects the session page history over DAP', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/navigation');
+  assert.equal(before.success, false);
+  assert.match(before.message, /launch a kernel session/);
+
+  const navPath = path.join(root, 'test', 'fixtures', 'nav.opuir.json');
+  const launch = await client.request('launch', {
+    program: navPath,
+    steps: ['tap 1', 'tap 2'],
+    coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+
+  const nav = await client.request('opurom/navigation');
+  assert.equal(nav.success, true, nav.message);
+  assert.equal(nav.body.count, 2);
+  assert.deepEqual(nav.body.navigations, [
+    { page: 'Settings', version: 1 },
+    { page: 'Profile', version: 2 }
+  ]);
+  assert.equal(nav.body.stateVersion, 2);
+
+  const vars = await client.request('scopes', { frameId: 1 });
+  assert.equal(vars.success, true, vars.message);
   await finish(client);
 });

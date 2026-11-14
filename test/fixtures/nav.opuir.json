@@ -1,0 +1,36 @@
+{
+  "ir": "0.1",
+  "app": "Nav",
+  "pages": ["Home", "Settings", "Profile"],
+  "state": [
+    { "name": "count", "type": "int", "init": 0 }
+  ],
+  "tree": {
+    "id": 0,
+    "kind": "Column",
+    "props": { "gap": 8 },
+    "children": [
+      {
+        "id": 1,
+        "kind": "Button",
+        "props": { "label": "Go" },
+        "children": [],
+        "events": { "tap": { "op": "push", "target": "Settings" } }
+      },
+      {
+        "id": 2,
+        "kind": "Button",
+        "props": { "label": "Profile" },
+        "children": [],
+        "events": {
+          "tap": { "actions": [
+            { "op": "add", "target": "count", "value": 1 },
+            { "op": "push", "target": "Profile" }
+          ] }
+        }
+      }
+    ],
+    "events": {}
+  },
+  "theme": { "mode": "system", "accent": "#097FEB", "radius": 12 }
+}

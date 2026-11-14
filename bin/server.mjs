@@ -225,6 +225,9 @@ class DapServer {
       case 'opurom/networkStats':
         await this.networkStats(message);
         return;
+      case 'opurom/navigation':
+        this.navigation(message);
+        return;
       case 'opurom/sessionLog':
         this.sessionLog(message);
         return;
@@ -608,6 +611,16 @@ class DapServer {
 
   // The kernel speaks a plain line protocol on stdin/stdout; these are the exact
   // state/patches/error lines it produced for this session, unmodified.
+  // Navigation history: one {page, version} record per `@nav` signal, in order.
+  navigation(request) {
+    this.requireKernel();
+    this.sendResponse(request, true, {
+      navigations: [...this.kernel.navigation],
+      count: this.kernel.navigation.length,
+      stateVersion: this.kernel.version
+    });
+  }
+
   sessionLog(request) {
     this.requireKernel();
     this.sendResponse(request, true, {
