@@ -1427,3 +1427,41 @@ test('stub kernel parses input text by the declared state type', () => {
   assert.match(run.stdout, /patches \[\{"name":"b","value":true\}\]/);
   assert.match(run.stdout, /state \[\{"name":"s","value":"Ada"\},\{"name":"n","value":42\},\{"name":"b","value":true\}\]/);
 });
+
+test('extension commands read the real kernel protocol when it is available', async t => {
+  if (!availableRealCore) {
+    t.skip('the real opurom-core binary is not built in this checkout');
+    return;
+  }
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, coreBinary: availableRealCore
+  });
+  assert.equal(launch.success, true, launch.message);
+
+  // The real kernel reports an empty network log and zeroed resource cache for
+  // a fresh counter program; both must still parse into typed DAP bodies.
+  const resources = await client.request('opurom/resourceStats');
+  assert.equal(resources.success, true, resources.message);
+  assert.equal(resources.body.budget, 65536);
+  assert.equal(resources.body.usedBytes, 0);
+  assert.equal(resources.body.entries, 0);
+
+  const network = await client.request('opurom/networkStats');
+  assert.equal(network.success, true, network.message);
+  assert.deepEqual(network.body.requests, []);
+
+  const layers = await client.request('opurom/layers');
+  assert.equal(layers.success, true, layers.message);
+  assert.ok(Array.isArray(layers.body.layers) && layers.body.layers.length > 0);
+  assert.equal(layers.body.layers[0].kind, 'Column');
+
+  const navigation = await client.request('opurom/navigation');
+  assert.equal(navigation.success, true, navigation.message);
+  assert.deepEqual(navigation.body.pages, []);
+  assert.deepEqual(navigation.body.navigations, []);
+  assert.equal(navigation.body.count, 0);
+
+  await finish(client);
+});
