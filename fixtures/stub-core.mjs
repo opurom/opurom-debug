@@ -40,6 +40,16 @@ if (ir.theme && ir.theme.mode !== undefined && !THEME_MODES.has(ir.theme.mode)) 
   console.error('error: invalid IR: root.theme.mode must be light, dark or system');
   process.exit(1);
 }
+if (ir.theme && ir.theme.accent !== undefined &&
+    !/^#[0-9A-Fa-f]{6}$/.test(String(ir.theme.accent))) {
+  console.error('error: invalid IR: root.theme.accent must be #RRGGBB');
+  process.exit(1);
+}
+if (ir.theme && ir.theme.radius !== undefined &&
+    (!Number.isInteger(ir.theme.radius) || ir.theme.radius < 0)) {
+  console.error('error: invalid IR: root.theme.radius must be a non-negative integer');
+  process.exit(1);
+}
 // Mirror the kernel's closed IR event name set.
 const EVENT_NAMES = new Set(['tap', 'input', 'doubleTap', 'longPress', 'drag']);
 const validateEvents = (node, at) => {

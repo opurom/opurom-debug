@@ -1478,14 +1478,16 @@ test('stub kernel enforces the closed IR event name set', () => {
   assert.match(run.stderr, /tap\|input\|doubleTap\|longPress\|drag/);
 });
 
-test('stub kernel enforces closed theme mode and state type sets', () => {
+test('stub kernel enforces closed theme and state value sets', () => {
   // The kernel, renderer and responsive DOM consumer all reject these values.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opurom-stub-sets-'));
   try {
     const base = JSON.parse(fs.readFileSync(irPath, 'utf8'));
     const cases = [
       ['mode', { ...base, theme: { ...base.theme, mode: 'neon' } }, /theme\.mode must be light/],
-      ['type', { ...base, state: [{ name: 'n', type: 'float', init: 0 }] }, /not int, bool or string/]
+      ['type', { ...base, state: [{ name: 'n', type: 'float', init: 0 }] }, /not int, bool or string/],
+      ['accent', { ...base, theme: { ...base.theme, accent: 'red' } }, /theme\.accent must be #RRGGBB/],
+      ['radius', { ...base, theme: { ...base.theme, radius: -5 } }, /theme\.radius must be/]
     ];
     for (const [label, ir, expected] of cases) {
       const file = path.join(dir, `${label}.json`);
