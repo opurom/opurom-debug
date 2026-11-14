@@ -216,6 +216,9 @@ class DapServer {
       case 'opurom/frameStats':
         this.frameStats(message);
         return;
+      case 'opurom/resourceStats':
+        await this.resourceStats(message);
+        return;
       case 'opurom/sessionLog':
         this.sessionLog(message);
         return;
@@ -555,6 +558,21 @@ class DapServer {
       lastStepMs: lastMs,
       avgStepMs: executed ? totalMs / executed : 0,
       stepsPerSecond: totalMs > 0 ? (executed * 1000) / totalMs : 0,
+      stateVersion: this.kernel.version
+    });
+  }
+
+  // Resource-cache accounting from the kernel: the plugin result cache's byte
+  // budget, used bytes and entry count. Read live over the kernel protocol so a
+  // memory inspection reflects the running session, not a local mirror.
+  async resourceStats(request) {
+    this.requireKernel();
+    const output = await this.kernel.command('resource');
+    const stats = output.stats || {};
+    this.sendResponse(request, true, {
+      budget: stats.budget,
+      usedBytes: stats.usedBytes,
+      entries: stats.entries,
       stateVersion: this.kernel.version
     });
   }

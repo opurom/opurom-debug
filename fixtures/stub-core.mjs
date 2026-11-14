@@ -91,6 +91,11 @@ input.on('line', raw => {
     printState();
     return;
   }
+  if (line === 'resource') {
+    // Mirror the real kernel: a fixed budget with no cached plugin results yet.
+    console.log(`resource ${JSON.stringify({ budget: 65536, usedBytes: 0, entries: 0 })} version ${version}`);
+    return;
+  }
   const split = line.indexOf(' ');
   const command = split === -1 ? line : line.slice(0, split);
   const rest = split === -1 ? '' : line.slice(split + 1).trim();

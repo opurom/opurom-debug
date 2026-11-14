@@ -34,7 +34,7 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -140,10 +140,17 @@ times it), the derived `stepsPerSecond`, and the current kernel `stateVersion`. 
 from timing the adapter's own kernel commands, describe exactly the current session, and reset at
 each `launch`. The request requires a launched kernel and returns a typed error before one.
 
+## Resource accounting
+
+`opurom/resourceStats` reports the kernel's plugin-result cache accounting for the running
+session: `budget` (the configured byte budget), `usedBytes` (bytes currently cached), `entries`
+(cached result count) and the current kernel `stateVersion`. The adapter reads it live over a
+`resource` kernel command, so it reflects the running session rather than a local mirror. The
+request requires a launched kernel and returns a typed error before one.
+
 ## Session log
 
-`opurom/sessionLog` returns the kernel protocol lines the adapter has read for the current
-session in arrival order: `lines` is the exact sequence of `state [...]` and `patches [...]`
+`opurom/sessionLog` returns the kernel protocol lines the adapter has read for the currentsession in arrival order: `lines` is the exact sequence of `state [...]` and `patches [...]`
 lines the kernel printed, plus any `error: ...` lines. `count` is the line total and
 `stateVersion` is the current kernel version. The adapter stores the lines verbatim while it
 parses them, so this request exposes the real kernel stream rather than a re-rendered summary
