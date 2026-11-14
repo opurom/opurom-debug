@@ -50,13 +50,62 @@ if (ir.theme && ir.theme.radius !== undefined &&
   console.error('error: invalid IR: root.theme.radius must be a non-negative number');
   process.exit(1);
 }
+if (ir.theme && ir.theme.fontScale !== undefined &&
+    (typeof ir.theme.fontScale !== 'number' || !Number.isFinite(ir.theme.fontScale) ||
+     ir.theme.fontScale < 0.5 || ir.theme.fontScale > 3.0)) {
+  console.error('error: invalid IR: root.theme.fontScale must be a number in 0.5..3.0');
+  process.exit(1);
+}
+if (ir.theme && ir.theme.tokens !== undefined) {
+  const tokens = ir.theme.tokens;
+  if (!tokens || typeof tokens !== 'object' || Array.isArray(tokens)) {
+    console.error('error: invalid IR: root.theme.tokens must be an object');
+    process.exit(1);
+  }
+  for (const key of ['surface', 'onSurface', 'stage']) {
+    if (tokens[key] !== undefined && !/^#[0-9A-Fa-f]{6}$/.test(String(tokens[key]))) {
+      console.error(`error: invalid IR: root.theme.tokens.${key} must be #RRGGBB`);
+      process.exit(1);
+    }
+  }
+  if (tokens.font !== undefined && typeof tokens.font !== 'string') {
+    console.error('error: invalid IR: root.theme.tokens.font must be a string');
+    process.exit(1);
+  }
+  if (tokens.contrast !== undefined && !['normal', 'high'].includes(tokens.contrast)) {
+    console.error('error: invalid IR: root.theme.tokens.contrast must be normal or high');
+    process.exit(1);
+  }
+}
+if (ir.pages !== undefined) {
+  if (!Array.isArray(ir.pages) || ir.pages.some(name => typeof name !== 'string')) {
+    console.error('error: invalid IR: root.pages must be an array of strings');
+    process.exit(1);
+  }
+  const seen = new Set();
+  for (const name of ir.pages) {
+    if (seen.has(name)) {
+      console.error(`error: invalid IR: root.pages duplicates ${JSON.stringify(name)}`);
+      process.exit(1);
+    }
+    seen.add(name);
+  }
+}
+// Mirror the kernel's closed action op set.
+const ACTION_OPS = new Set(['set', 'add', 'sub', 'toggle', 'push', 'validate']);
 // Mirror the kernel's closed IR event name set.
 const EVENT_NAMES = new Set(['tap', 'input', 'doubleTap', 'longPress', 'drag']);
 const validateEvents = (node, at) => {
-  for (const [event] of Object.entries(node.events || {})) {
+  for (const [event, spec] of Object.entries(node.events || {})) {
     if (!EVENT_NAMES.has(event)) {
       console.error(`error: invalid IR: ${at}.events.${event}: unknown event name (expected tap|input|doubleTap|longPress|drag)`);
       process.exit(1);
+    }
+    for (const action of spec.actions ?? [spec]) {
+      if (!ACTION_OPS.has(action?.op)) {
+        console.error(`error: invalid IR: ${at}.events.${event}.op ${JSON.stringify(action?.op)} is not set, add, sub, toggle, push or validate`);
+        process.exit(1);
+      }
     }
   }
   for (const [index, child] of (node.children || []).entries()) {

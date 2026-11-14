@@ -1488,7 +1488,13 @@ test('stub kernel enforces closed theme and state value sets', () => {
       ['type', { ...base, state: [{ name: 'n', type: 'float', init: 0 }] }, /not int, bool or string/],
       ['accent', { ...base, theme: { ...base.theme, accent: 'red' } }, /theme\.accent must be #RRGGBB/],
       ['radius', { ...base, theme: { ...base.theme, radius: -5 } }, /theme\.radius must be/],
-      ['radius-fraction', { ...base, theme: { ...base.theme, radius: 8.5 } }, null]
+      ['fontscale', { ...base, theme: { ...base.theme, fontScale: 9 } }, /fontScale must be a number in 0\.5\.\.3\.0/],
+      ['token', { ...base, theme: { ...base.theme, tokens: { surface: 'red' } } }, /tokens\.surface must be #RRGGBB/],
+      ['pages', { ...base, pages: ['Home', 'Home'] }, /pages duplicates "Home"/],
+      ['radius-fraction', { ...base, theme: { ...base.theme, radius: 8.5 } }, null],
+      ['op', (() => { const d = JSON.parse(JSON.stringify(base));
+        d.tree.events = { tap: { op: 'mul', target: 'count', value: 1 } };
+        return d; })(), /is not set, add, sub, toggle, push or validate/]
     ];
     for (const [label, ir, expected] of cases) {
       const file = path.join(dir, `${label}.json`);
