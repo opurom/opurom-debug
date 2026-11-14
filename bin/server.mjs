@@ -222,6 +222,9 @@ class DapServer {
       case 'opurom/layers':
         await this.layers(message);
         return;
+      case 'opurom/networkStats':
+        await this.networkStats(message);
+        return;
       case 'opurom/sessionLog':
         this.sessionLog(message);
         return;
@@ -588,6 +591,17 @@ class DapServer {
     const output = await this.kernel.command('layers');
     this.sendResponse(request, true, {
       layers: output.records || [],
+      stateVersion: this.kernel.version
+    });
+  }
+
+  // Network capture: the requests the session's network.request capability made,
+  // in order, read live over a `network` kernel command.
+  async networkStats(request) {
+    this.requireKernel();
+    const output = await this.kernel.command('network');
+    this.sendResponse(request, true, {
+      requests: output.records || [],
       stateVersion: this.kernel.version
     });
   }

@@ -914,6 +914,33 @@ test('layers inspects the live display list as effect-layer records', async t =>
   await finish(client);
 });
 
+test('networkStats reports the captured network requests live', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/networkStats');
+  assert.equal(before.success, false);
+  assert.match(before.message, /launch a kernel session/);
+
+  const launch = await client.request('launch', { program: irPath, steps: ['tap 4'], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const stats = await client.request('opurom/networkStats');
+  assert.equal(stats.success, true, stats.message);
+  const requests = stats.body.requests;
+  assert.ok(Array.isArray(requests) && requests.length > 0, 'requests must be a non-empty array');
+  for (const request of requests) {
+    assert.equal(typeof request.method, 'string');
+    assert.equal(typeof request.url, 'string');
+    assert.equal(typeof request.status, 'number');
+  }
+  assert.equal(requests[0].method, 'GET');
+
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const again = await client.request('opurom/networkStats');
+  assert.deepEqual(again.body.requests, requests, 'network capture is deterministic');
+  await finish(client);
+});
+
 test('disconnect cleans up all sessions without leftover child processes', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'opurom-debug-'));
   const pidFile = path.join(tmp, 'pids.txt');  t.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} });
