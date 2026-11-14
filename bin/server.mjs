@@ -219,6 +219,9 @@ class DapServer {
       case 'opurom/resourceStats':
         await this.resourceStats(message);
         return;
+      case 'opurom/layers':
+        await this.layers(message);
+        return;
       case 'opurom/sessionLog':
         this.sessionLog(message);
         return;
@@ -573,6 +576,18 @@ class DapServer {
       budget: stats.budget,
       usedBytes: stats.usedBytes,
       entries: stats.entries,
+      stateVersion: this.kernel.version
+    });
+  }
+
+  // Layer inspection for the live display list: one {id, kind, effects} record
+  // per node the renderer receives, read over a `layers` kernel command so the
+  // debugger shows the same layer view as the CLI inspect.
+  async layers(request) {
+    this.requireKernel();
+    const output = await this.kernel.command('layers');
+    this.sendResponse(request, true, {
+      layers: output.records || [],
       stateVersion: this.kernel.version
     });
   }

@@ -34,7 +34,7 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -148,9 +148,19 @@ session: `budget` (the configured byte budget), `usedBytes` (bytes currently cac
 `resource` kernel command, so it reflects the running session rather than a local mirror. The
 request requires a launched kernel and returns a typed error before one.
 
+## Layer inspection
+
+`opurom/layers` inspects the live display list: `layers` is one `{id, kind, effects}`
+record per node the renderer receives, in tree order. Each record's `effects` array holds the
+node's derived effect layers (`shadow`, `glass`, `gradient`, `opacity` and any declared effect
+kind), matching the CLI `inspect --layers` view. The adapter reads it live over a `layers`
+kernel command, so the inspection reflects the running session's display list rather than a
+re-rendered summary. The request requires a launched kernel and returns a typed error before one.
+
 ## Session log
 
-`opurom/sessionLog` returns the kernel protocol lines the adapter has read for the currentsession in arrival order: `lines` is the exact sequence of `state [...]` and `patches [...]`
+`opurom/sessionLog` returns the kernel protocol lines the adapter has read for the current
+session in arrival order: `lines` is the exact sequence of `state [...]` and `patches [...]`
 lines the kernel printed, plus any `error: ...` lines. `count` is the line total and
 `stateVersion` is the current kernel version. The adapter stores the lines verbatim while it
 parses them, so this request exposes the real kernel stream rather than a re-rendered summary
