@@ -1487,7 +1487,8 @@ test('stub kernel enforces closed theme and state value sets', () => {
       ['mode', { ...base, theme: { ...base.theme, mode: 'neon' } }, /theme\.mode must be light/],
       ['type', { ...base, state: [{ name: 'n', type: 'float', init: 0 }] }, /not int, bool or string/],
       ['accent', { ...base, theme: { ...base.theme, accent: 'red' } }, /theme\.accent must be #RRGGBB/],
-      ['radius', { ...base, theme: { ...base.theme, radius: -5 } }, /theme\.radius must be/]
+      ['radius', { ...base, theme: { ...base.theme, radius: -5 } }, /theme\.radius must be/],
+      ['radius-fraction', { ...base, theme: { ...base.theme, radius: 8.5 } }, null]
     ];
     for (const [label, ir, expected] of cases) {
       const file = path.join(dir, `${label}.json`);
@@ -1495,8 +1496,12 @@ test('stub kernel enforces closed theme and state value sets', () => {
       const run = spawnSync(process.execPath, [stubCore, file], {
         input: 'state\nquit\n', encoding: 'utf8'
       });
-      assert.equal(run.status, 1, `${label}: ${run.stderr}`);
-      assert.match(run.stderr, expected, `${label}: wrong diagnostic`);
+      if (expected === null) {
+        assert.equal(run.status, 0, `${label}: fractional radius must be accepted: ${run.stderr}`);
+      } else {
+        assert.equal(run.status, 1, `${label}: ${run.stderr}`);
+        assert.match(run.stderr, expected, `${label}: wrong diagnostic`);
+      }
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -46,8 +46,8 @@ if (ir.theme && ir.theme.accent !== undefined &&
   process.exit(1);
 }
 if (ir.theme && ir.theme.radius !== undefined &&
-    (!Number.isInteger(ir.theme.radius) || ir.theme.radius < 0)) {
-  console.error('error: invalid IR: root.theme.radius must be a non-negative integer');
+    (typeof ir.theme.radius !== 'number' || !Number.isFinite(ir.theme.radius) || ir.theme.radius < 0)) {
+  console.error('error: invalid IR: root.theme.radius must be a non-negative number');
   process.exit(1);
 }
 // Mirror the kernel's closed IR event name set.
