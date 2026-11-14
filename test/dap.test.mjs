@@ -883,6 +883,37 @@ test('resourceStats reports the kernel resource cache accounting live', async t 
   await finish(client);
 });
 
+test('layers inspects the live display list as effect-layer records', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/layers');
+  assert.equal(before.success, false);
+  assert.match(before.message, /launch a kernel session/);
+
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const layers = await client.request('opurom/layers');
+  assert.equal(layers.success, true, layers.message);
+  const records = layers.body.layers;
+  assert.ok(Array.isArray(records) && records.length > 0, 'layers must be a non-empty array');
+  // Every record carries the three fields the CLI layer view reports.
+  for (const record of records) {
+    assert.equal(typeof record.id, 'number');
+    assert.equal(typeof record.kind, 'string');
+    assert.ok(Array.isArray(record.effects));
+  }
+  // The counter tree's first node is the root Column.
+  assert.equal(records[0].kind, 'Column');
+
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const again = await client.request('opurom/layers');
+  assert.deepEqual(again.body.layers, records, 'layer inspection is deterministic');
+  await finish(client);
+});
+
 test('disconnect cleans up all sessions without leftover child processes', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'opurom-debug-'));
   const pidFile = path.join(tmp, 'pids.txt');  t.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} });

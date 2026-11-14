@@ -44,6 +44,26 @@ function snapshot() {
 function printState() {
   console.log(`state ${JSON.stringify(snapshot())} version ${version}`);
 }
+function effectKinds(node) {
+  const props = node.props || {};
+  const kinds = [];
+  if (Number.isFinite(props.shadow) && props.shadow > 0) kinds.push('shadow');
+  if (props.glass === true) kinds.push('glass');
+  if (String(props.gradient ?? '').includes(',')) kinds.push('gradient');
+  if (Number.isFinite(props.opacity) && props.opacity < 1) kinds.push('opacity');
+  for (const effect of Array.isArray(props.effects) ? props.effects : []) {
+    if (typeof effect?.kind === 'string' && !kinds.includes(effect.kind)) kinds.push(effect.kind);
+  }
+  return kinds;
+}
+function collectLayers(node, out) {
+  out.push({ id: Number(node.id), kind: node.kind, effects: effectKinds(node) });
+  for (const child of node.children || []) collectLayers(child, out);
+  return out;
+}
+function printLayers() {
+  console.log(`layers ${JSON.stringify(collectLayers(ir.tree, []))} version ${version}`);
+}
 function actionsFor(handler) {
   if (Array.isArray(handler)) return handler;
   if (handler && Array.isArray(handler.actions)) return handler.actions;
@@ -94,6 +114,10 @@ input.on('line', raw => {
   if (line === 'resource') {
     // Mirror the real kernel: a fixed budget with no cached plugin results yet.
     console.log(`resource ${JSON.stringify({ budget: 65536, usedBytes: 0, entries: 0 })} version ${version}`);
+    return;
+  }
+  if (line === 'layers') {
+    printLayers();
     return;
   }
   const split = line.indexOf(' ');
