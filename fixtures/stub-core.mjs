@@ -120,6 +120,11 @@ input.on('line', raw => {
     printLayers();
     return;
   }
+  if (line === 'network') {
+    // Mirror the real kernel: one captured request through the network capability.
+    console.log(`network ${JSON.stringify([{ method: 'GET', url: 'https://api.example.com/items', status: 200, requestBytes: 48, responseBytes: 64 }])} version ${version}`);
+    return;
+  }
   const split = line.indexOf(' ');
   const command = split === -1 ? line : line.slice(0, split);
   const rest = split === -1 ? '' : line.slice(split + 1).trim();

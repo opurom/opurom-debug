@@ -34,7 +34,7 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -156,6 +156,14 @@ node's derived effect layers (`shadow`, `glass`, `gradient`, `opacity` and any d
 kind), matching the CLI `inspect --layers` view. The adapter reads it live over a `layers`
 kernel command, so the inspection reflects the running session's display list rather than a
 re-rendered summary. The request requires a launched kernel and returns a typed error before one.
+
+## Network capture
+
+`opurom/networkStats` returns the network requests the running session made through the
+`network.request` capability: `requests` is one `{method, url, status, requestBytes, responseBytes}`
+record per request, in invocation order. The adapter reads it live over a `network` kernel command,
+so the capture reflects the running session rather than a local mirror. The request requires a
+launched kernel and returns a typed error before one.
 
 ## Session log
 
