@@ -83,6 +83,11 @@ function dispatch(eventName, nodeId, text) {
       patches.push({ name: '@nav', value: action.target });
       continue;
     }
+    // A validate is a built-in form signal, likewise reserved and state-free.
+    if (action.op === 'validate') {
+      patches.push({ name: '@validate', value: action.target });
+      continue;
+    }
     if (!state.has(action.target)) throw new Error(`unknown state ${action.target}`);
     let value;
     if (action.op === 'add' || action.op === 'sub') {

@@ -1384,3 +1384,32 @@ test('navigation inspects the session page history over DAP', async t => {
   assert.equal(vars.success, true, vars.message);
   await finish(client);
 });
+
+test('kernel session keeps @validate out of the state mirror', () => {
+  const session = new KernelSession('unused', 'unused');
+  session.onLine('state [{"name":"name","value":""}] version 0');
+  session.onLine('patches [{"name":"@validate","value":"form"}] version 1');
+  assert.deepEqual(session.state, { name: '' });
+  assert.equal(Object.hasOwn(session.state, '@validate'), false);
+});
+
+test('validate signals dispatch through the stub kernel over DAP', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const validatePath = path.join(root, 'test', 'fixtures', 'validate.opuir.json');
+  const launch = await client.request('launch', {
+    program: validatePath,
+    steps: ['tap 2'],
+    coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const log = await client.request('opurom/sessionLog');
+  assert.equal(log.success, true, log.message);
+  assert.ok(
+    log.body.lines.some(line => line.includes('"@validate"') && line.includes('"form"')),
+    'the session log records the validate signal'
+  );
+  await finish(client);
+});
