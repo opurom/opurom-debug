@@ -172,7 +172,8 @@ declared route names in order, read live over a `pages` kernel command; `navigat
 is one `{page, version}` record per `@nav` patch, in arrival order, and
 `count` is the navigation total. The kernel emits `@nav` for each `push` action without mutating
 state, so the adapter records it separately from the state mirror; `stateVersion` is
-the kernel version at the time of the request. The request requires a launched kernel
+the kernel version at the time of the request. The `@validate` signal emitted for
+`validate` actions is likewise excluded from the state mirror. The request requires a launched kernel
 and returns a typed error before one.
 
 ## Session log
