@@ -854,10 +854,38 @@ test('frameStats reports adapter-measured step timing for the session', async t 
   await finish(client);
 });
 
+test('resourceStats reports the kernel resource cache accounting live', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/resourceStats');
+  assert.equal(before.success, false);
+  assert.match(before.message, /launch a kernel session/);
+
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const stats = await client.request('opurom/resourceStats');
+  assert.equal(stats.success, true, stats.message);
+  assert.equal(stats.body.budget, 65536);
+  assert.equal(stats.body.usedBytes, 0);
+  assert.equal(stats.body.entries, 0);
+  assert.equal(stats.body.stateVersion, 0);
+
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+  const after = await client.request('opurom/resourceStats');
+  assert.equal(after.success, true, after.message);
+  assert.equal(after.body.stateVersion, 1);
+  // Deterministic: the same request twice yields identical accounting.
+  const again = await client.request('opurom/resourceStats');
+  assert.deepEqual(again.body, after.body);
+  await finish(client);
+});
+
 test('disconnect cleans up all sessions without leftover child processes', async t => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'opurom-debug-'));
-  const pidFile = path.join(tmp, 'pids.txt');
-  t.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} });
+  const pidFile = path.join(tmp, 'pids.txt');  t.after(() => { try { fs.rmSync(tmp, { recursive: true, force: true }); } catch {} });
   const client = startServer(t, { OPR_PID_FILE: pidFile });
   await initialize(client);
   const first = await client.request('launch', { program: irPath, steps: ['tap 4'], coreBinary: stubCore });
