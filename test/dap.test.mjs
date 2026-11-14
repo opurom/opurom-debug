@@ -326,6 +326,12 @@ test('kernel output lines expose state and patch arrays', () => {
     entries: [{ name: 'count', value: 3 }],
     version: 3
   });
+  assert.deepEqual(parseKernelLine('pages ["Home","Settings"] version 2'), {
+    kind: 'pages',
+    records: ['Home', 'Settings'],
+    version: 2
+  });
+  assert.equal(parseKernelLine('pages ["Home", 7] version 2'), null);
   assert.equal(parseKernelLine('error: unknown command'), null);
 });
 
@@ -1366,6 +1372,7 @@ test('navigation inspects the session page history over DAP', async t => {
 
   const nav = await client.request('opurom/navigation');
   assert.equal(nav.success, true, nav.message);
+  assert.deepEqual(nav.body.pages, ['Home', 'Settings', 'Profile']);
   assert.equal(nav.body.count, 2);
   assert.deepEqual(nav.body.navigations, [
     { page: 'Settings', version: 1 },

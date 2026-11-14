@@ -226,7 +226,7 @@ class DapServer {
         await this.networkStats(message);
         return;
       case 'opurom/navigation':
-        this.navigation(message);
+        await this.navigation(message);
         return;
       case 'opurom/sessionLog':
         this.sessionLog(message);
@@ -611,10 +611,13 @@ class DapServer {
 
   // The kernel speaks a plain line protocol on stdin/stdout; these are the exact
   // state/patches/error lines it produced for this session, unmodified.
-  // Navigation history: one {page, version} record per `@nav` signal, in order.
-  navigation(request) {
+  // Navigation history: one {page, version} record per `@nav` signal, in order,
+  // plus the declared routes read live over a `pages` kernel command.
+  async navigation(request) {
     this.requireKernel();
+    const output = await this.kernel.command('pages');
     this.sendResponse(request, true, {
+      pages: output.records || [],
       navigations: [...this.kernel.navigation],
       count: this.kernel.navigation.length,
       stateVersion: this.kernel.version

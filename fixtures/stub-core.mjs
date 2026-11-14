@@ -131,6 +131,10 @@ input.on('line', raw => {
     console.log(`network ${JSON.stringify([{ method: 'GET', url: 'https://api.example.com/items', status: 200, requestBytes: 48, responseBytes: 64 }])} version ${version}`);
     return;
   }
+  if (line === 'pages') {
+    console.log(`pages ${JSON.stringify(Array.isArray(ir.pages) ? ir.pages : [])} version ${version}`);
+    return;
+  }
   const split = line.indexOf(' ');
   const command = split === -1 ? line : line.slice(0, split);
   const rest = split === -1 ? '' : line.slice(split + 1).trim();
