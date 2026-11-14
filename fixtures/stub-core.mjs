@@ -27,6 +27,19 @@ if (ir.ir !== '0.1' || !Array.isArray(ir.state) || !ir.tree) {
   console.error('error: invalid IR v0.1');
   process.exit(1);
 }
+// Mirror the kernel's closed state type and theme mode sets.
+const STATE_TYPES = new Set(['int', 'bool', 'string']);
+for (const [index, entry] of ir.state.entries()) {
+  if (!STATE_TYPES.has(entry.type)) {
+    console.error(`error: invalid IR: state[${index}].type ${JSON.stringify(entry.type)} is not int, bool or string`);
+    process.exit(1);
+  }
+}
+const THEME_MODES = new Set(['light', 'dark', 'system']);
+if (ir.theme && ir.theme.mode !== undefined && !THEME_MODES.has(ir.theme.mode)) {
+  console.error('error: invalid IR: root.theme.mode must be light, dark or system');
+  process.exit(1);
+}
 // Mirror the kernel's closed IR event name set.
 const EVENT_NAMES = new Set(['tap', 'input', 'doubleTap', 'longPress', 'drag']);
 const validateEvents = (node, at) => {

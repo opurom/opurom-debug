@@ -1477,3 +1477,26 @@ test('stub kernel enforces the closed IR event name set', () => {
   assert.match(run.stderr, /unknown event name/);
   assert.match(run.stderr, /tap\|input\|doubleTap\|longPress\|drag/);
 });
+
+test('stub kernel enforces closed theme mode and state type sets', () => {
+  // The kernel, renderer and responsive DOM consumer all reject these values.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opurom-stub-sets-'));
+  try {
+    const base = JSON.parse(fs.readFileSync(irPath, 'utf8'));
+    const cases = [
+      ['mode', { ...base, theme: { ...base.theme, mode: 'neon' } }, /theme\.mode must be light/],
+      ['type', { ...base, state: [{ name: 'n', type: 'float', init: 0 }] }, /not int, bool or string/]
+    ];
+    for (const [label, ir, expected] of cases) {
+      const file = path.join(dir, `${label}.json`);
+      fs.writeFileSync(file, JSON.stringify(ir));
+      const run = spawnSync(process.execPath, [stubCore, file], {
+        input: 'state\nquit\n', encoding: 'utf8'
+      });
+      assert.equal(run.status, 1, `${label}: ${run.stderr}`);
+      assert.match(run.stderr, expected, `${label}: wrong diagnostic`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
