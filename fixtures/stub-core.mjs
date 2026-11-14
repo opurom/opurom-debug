@@ -100,7 +100,13 @@ function dispatch(eventName, nodeId, text) {
     else if (action.op === 'set') {
       if (action.value !== undefined) value = action.value;
       else if (action.valueFrom !== undefined) value = state.get(action.valueFrom);
-      else value = text;
+      else {
+        // Mirror the kernel: parse input text by the declared state's type.
+        const current = state.get(action.target);
+        if (typeof current === 'number') value = Number.parseInt(text, 10) || 0;
+        else if (typeof current === 'boolean') value = text === 'true';
+        else value = text;
+      }
     } else throw new Error(`unsupported action ${action.op}`);
     state.set(action.target, value);
     patches.push({ name: action.target, value });

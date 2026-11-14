@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
@@ -1412,4 +1412,18 @@ test('validate signals dispatch through the stub kernel over DAP', async t => {
     'the session log records the validate signal'
   );
   await finish(client);
+});
+
+test('stub kernel parses input text by the declared state type', () => {
+  // The real kernel and the protocol-compatible stub must agree on typed
+  // input sets: int controls parse numbers, bool controls parse "true".
+  const ir = path.join(root, 'test', 'fixtures', 'typed-input.opuir.json');
+  const run = spawnSync(process.execPath, [stubCore, ir], {
+    input: 'input 1 Ada\ninput 2 42\ninput 3 true\nstate\nquit\n',
+    encoding: 'utf8'
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /patches \[\{"name":"n","value":42\}\]/);
+  assert.match(run.stdout, /patches \[\{"name":"b","value":true\}\]/);
+  assert.match(run.stdout, /state \[\{"name":"s","value":"Ada"\},\{"name":"n","value":42\},\{"name":"b","value":true\}\]/);
 });

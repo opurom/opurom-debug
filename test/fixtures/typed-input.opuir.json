@@ -1,0 +1,70 @@
+{
+  "ir": "0.1",
+  "app": "Counter",
+  "state": [
+    {
+      "name": "s",
+      "type": "string",
+      "init": ""
+    },
+    {
+      "name": "n",
+      "type": "int",
+      "init": 0
+    },
+    {
+      "name": "b",
+      "type": "bool",
+      "init": false
+    }
+  ],
+  "tree": {
+    "id": 0,
+    "kind": "Column",
+    "props": {},
+    "children": [
+      {
+        "id": 1,
+        "kind": "Input",
+        "props": {},
+        "children": [],
+        "events": {
+          "input": {
+            "op": "set",
+            "target": "s"
+          }
+        }
+      },
+      {
+        "id": 2,
+        "kind": "Slider",
+        "props": {},
+        "children": [],
+        "events": {
+          "input": {
+            "op": "set",
+            "target": "n"
+          }
+        }
+      },
+      {
+        "id": 3,
+        "kind": "Switch",
+        "props": {},
+        "children": [],
+        "events": {
+          "input": {
+            "op": "set",
+            "target": "b"
+          }
+        }
+      }
+    ],
+    "events": {}
+  },
+  "theme": {
+    "mode": "system",
+    "accent": "#097FEB",
+    "radius": 12
+  }
+}
