@@ -915,6 +915,30 @@ test('restart before launch returns a typed error and keeps the server alive', a
   await finish(client);
 });
 
+test('restart while the session is running is rejected and the run finishes', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: Array(30).fill('tap 4'), coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  // configurationDone and restart go out back-to-back: the server dispatches
+  // requests serially, so restart is evaluated while the step loop is running.
+  const configured = client.request('configurationDone');
+  const pending = client.request('restart');
+  const [cd, failed] = await Promise.all([configured, pending]);
+  assert.equal(cd.success, true, cd.message);
+  assert.equal(failed.success, false);
+  assert.match(failed.message, /cannot restart while the session is running/);
+  assert.equal(failed.body.error.id, 1001);
+  const alive = await client.request('threads');
+  assert.equal(alive.success, true, alive.message);
+  await client.waitForEvent('terminated', () => true, 'session finishes after the rejected restart');
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '30');
+  await finish(client);
+});
+
 test('frameStats reports adapter-measured step timing for the session', async t => {
   const client = startServer(t);
   await initialize(client);

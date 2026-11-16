@@ -220,8 +220,8 @@ breakpoint, out-of-range page), completion labels and prefix filtering, `excepti
 without an active exception, `opurom/frameStats` counters before launch, at a breakpoint stop and
 after the final step, exact hit counts over several stub-kernel state changes, initialize
 capability equality, restart dropping state while replaying breakpoints and exact hit counts from
-a fresh kernel, restart rejected before launch, data breakpoint stops on watched state writes
-(including a baseline moved by
+a fresh kernel, restart rejected before launch and while steps are running, data breakpoint stops
+on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full
 `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
