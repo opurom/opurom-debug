@@ -1,0 +1,36 @@
+{
+  "ir": "0.1.0",
+  "app": "Locale",
+  "i18n": {
+    "locale": { "active": "en", "supported": ["en", "ar"] },
+    "messages": { "greeting": { "en": "Hello", "ar": "مرحبا" } }
+  },
+  "state": [
+    { "name": "count", "type": "int", "init": 0 }
+  ],
+  "tree": {
+    "id": 0,
+    "kind": "Column",
+    "props": { "gap": 8 },
+    "children": [
+      {
+        "id": 1,
+        "kind": "Button",
+        "props": { "label": "Switch" },
+        "children": [],
+        "events": {
+          "tap": {
+            "actions": [
+              { "op": "locale", "target": "ar" },
+              { "op": "push", "target": "Settings" },
+              { "op": "validate", "target": "form" },
+              { "op": "add", "target": "count", "value": 1 }
+            ]
+          }
+        }
+      }
+    ],
+    "events": {}
+  },
+  "theme": { "mode": "system", "accent": "#097FEB", "radius": 12 }
+}

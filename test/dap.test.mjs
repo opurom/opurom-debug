@@ -1529,6 +1529,40 @@ test('validate signals dispatch through the stub kernel over DAP', async t => {
   await finish(client);
 });
 
+test('reserved patches stay out of the state mirror and setVariable', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const localePath = path.join(root, 'test', 'fixtures', 'locale.opuir.json');
+  const launch = await client.request('launch', {
+    program: localePath, steps: ['tap 1'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  await client.request('continue', { threadId: 1 });
+  await client.waitForEvent('terminated', () => true, 'terminated');
+
+  const vars = await client.request('variables', { variablesReference: 1 });
+  assert.equal(vars.success, true, vars.message);
+  assert.deepEqual(vars.body.variables.map(variable => variable.name), ['count']);
+  assert.equal(vars.body.variables[0].value, '1');
+  assert.equal(vars.body.stateVersion, 1);
+  for (const reserved of ['@locale', '@nav', '@validate']) {
+    const edit = await client.request('setVariable', {
+      variablesReference: 1, name: reserved, value: 'ar'
+    });
+    assert.equal(edit.success, false, reserved);
+    assert.match(edit.message, /Unknown variable/, reserved);
+    assert.equal(edit.body.error.id, 2001, reserved);
+  }
+  const log = await client.request('opurom/sessionLog');
+  assert.ok(
+    log.body.lines.some(line =>
+      line.includes('"@locale"') && line.includes('"@nav"') &&
+      line.includes('"@validate"') && line.includes('"count"')),
+    'the session log records every reserved patch in the kernel stream'
+  );
+  await finish(client);
+});
+
 test('stub kernel parses input text by the declared state type', () => {
   // The real kernel and the protocol-compatible stub must agree on typed
   // input sets: int controls parse numbers, bool controls parse "true".

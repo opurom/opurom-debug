@@ -92,7 +92,7 @@ if (ir.pages !== undefined) {
   }
 }
 // Mirror the kernel's closed action op set.
-const ACTION_OPS = new Set(['set', 'add', 'sub', 'toggle', 'push', 'validate']);
+const ACTION_OPS = new Set(['set', 'add', 'sub', 'toggle', 'push', 'validate', 'locale']);
 // Mirror the kernel's closed IR event name set.
 const EVENT_NAMES = new Set(['tap', 'input', 'doubleTap', 'longPress', 'drag']);
 const validateEvents = (node, at) => {
@@ -163,6 +163,11 @@ function dispatch(eventName, nodeId, text) {
   if (actions.length === 0) throw new Error(`node ${nodeId} has no ${eventName} handler`);
   const patches = [];
   for (const action of actions) {
+    // A locale switch is a reserved signal: it changes no state field.
+    if (action.op === 'locale') {
+      patches.push({ name: '@locale', value: action.target });
+      continue;
+    }
     // A push is a navigation signal: no state mutation, just the reserved
     // `@nav` patch the real kernel emits.
     if (action.op === 'push') {
