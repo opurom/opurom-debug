@@ -88,6 +88,7 @@ class DapServer {
     this.queue = Promise.resolve();
     this.output = Promise.resolve();
     this.kernel = null;
+    this.launchBinary = null;
     this.sessions = new Set();
     this.program = null;
     this.sourcePath = null;
@@ -171,6 +172,9 @@ class DapServer {
         return;
       case 'launch':
         await this.launch(message, args);
+        return;
+      case 'restart':
+        await this.restart(message);
         return;
       case 'setBreakpoints':
         this.setBreakpoints(message, args);
@@ -282,6 +286,7 @@ class DapServer {
     }
     const map = buildSourceMap(text);
     this.kernel = kernel;
+    this.launchBinary = binary;
     this.program = program;
     this.sourcePath = program;
     this.nodeLines = map.nodeLines;
@@ -301,6 +306,47 @@ class DapServer {
     this.exception = null;
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.sendResponse(request, true);
+  }
+
+  // Hot restart: drop runtime state, keep the debug configuration. The fresh
+  // kernel replans the same steps, breakpoint hit counters restart with it and
+  // watched values are re-baselined so data breakpoints only fire on the next
+  // real kernel write. Breakpoints stay registered because no `initialized`
+  // event is sent, and steps run immediately like a fresh configurationDone.
+  async restart(request) {
+    if (this.running) throw new Error('cannot restart while the session is running');
+    if (!this.kernel) throw new Error('restart requires a launched session');
+    const previous = this.kernel;
+    this.kernel = null;
+    this.sessions.delete(previous);
+    await previous.quit();
+    const kernel = new KernelSession(this.launchBinary, this.program);
+    this.sessions.add(kernel);
+    try {
+      await kernel.start();
+    } catch (error) {
+      await kernel.quit();
+      this.sessions.delete(kernel);
+      throw error;
+    }
+    this.kernel = kernel;
+    this.stepIndex = 0;
+    this.currentLine = 1;
+    this.completed = false;
+    this.stopped = false;
+    this.terminated = false;
+    this.pauseRequested = false;
+    this.skipLineBreakpoint = false;
+    this.exception = null;
+    this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
+    for (const records of this.breakpointsBySource.values()) {
+      for (const record of records) record.hits = 0;
+    }
+    for (const record of this.dataBreakpoints.values()) {
+      if (Object.hasOwn(kernel.state, record.name)) record.last = kernel.state[record.name];
+    }
+    this.sendResponse(request, true);
+    this.startSteps();
   }
 
   setBreakpoints(request, args) {

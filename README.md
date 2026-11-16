@@ -31,7 +31,7 @@ DAP error response, and the server stays alive.
 
 ## Supported requests
 
-`initialize`, `launch`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
+`initialize`, `launch`, `restart`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
 `exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
@@ -44,7 +44,7 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsEvaluateForHovers`, `supportsConditionalBreakpoints`,
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
-`supportsDataBreakpoints` and
+`supportsDataBreakpoints`, `supportsRestartRequest` and
 `exceptionBreakpointFilters` (`all`, `uncaught`), plus five documented Opurom extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
 `supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`.
@@ -126,6 +126,14 @@ event with reason `step`, the current source line and the new `stateVersion`. `c
 remaining commands. IR-state debugging has one frame and no call stack, so step-in and step-out
 have nothing deeper to enter and only the top frame to leave; they are single real steps, not
 no-ops.
+
+`restart` performs a hot restart: it quits the kernel, starts a fresh one with the same launch
+arguments, drops runtime state, and replans the same steps as if `configurationDone` had just
+arrived. The debug configuration survives — registered breakpoints, exception filters and data
+breakpoints stay, hit counters reset with the fresh kernel and watched values re-baseline to the
+initial state, so a data breakpoint only fires on the next real kernel write. No second
+`initialized` event is sent, so the client keeps its configuration. Like `launch`, a restart while
+steps are running is rejected, and one before `launch` returns a typed error.
 
 `disconnect` terminates every kernel session the adapter created (the response reports
 `sessionsClosed`), clears state and exits cleanly. The suite verifies no child process is left
@@ -211,7 +219,9 @@ expression, malformed completions arguments, invalid variable, invalid hit condi
 breakpoint, out-of-range page), completion labels and prefix filtering, `exceptionInfo` with and
 without an active exception, `opurom/frameStats` counters before launch, at a breakpoint stop and
 after the final step, exact hit counts over several stub-kernel state changes, initialize
-capability equality, data breakpoint stops on watched state writes (including a baseline moved by
+capability equality, restart dropping state while replaying breakpoints and exact hit counts from
+a fresh kernel, restart rejected before launch, data breakpoint stops on watched state writes
+(including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full
 `initialize -> launch -> setBreakpoints -> configurationDone -> hit -> evaluate -> setVariable
@@ -227,6 +237,7 @@ descriptor that points at this adapter.
 command, so the next kernel step may overwrite the value. Source lines come from IR node-id
 declarations in the program JSON, not from a compiled source map or an `.opu` text file. There is
 a single thread and one stack frame, and `pause` takes effect at a kernel command boundary.
+`restart` ignores client-supplied arguments and reuses the original `launch` arguments.
 `launch` may be called more than once so all-session cleanup can be tested, but only one kernel
 is active at a time. Hit counts accept exact positive integers only; DAP comparison expressions
 such as `>= 3` are rejected with a diagnostic. A `setBreakpoints` call replaces a source's

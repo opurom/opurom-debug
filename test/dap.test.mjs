@@ -394,7 +394,7 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
     'supportsHitConditionalBreakpoints', 'supportsDataBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
-    'supportsFrameStatsRequest', 'supportsSessionLogRequest'
+    'supportsFrameStatsRequest', 'supportsSessionLogRequest', 'supportsRestartRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -821,6 +821,97 @@ test('stepIn and stepOut advance real kernel steps', async t => {
   const cont = await client.request('continue', { threadId: 1 });
   assert.equal(cont.success, true, cont.message);
   await client.waitForEvent('terminated', () => true, 'terminated');
+  await finish(client);
+});
+
+test('restart drops state, keeps breakpoints and replays steps', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const sb = await client.request('setBreakpoints', {
+    source: { path: irPath }, breakpoints: [{ condition: 'count == 2' }]
+  });
+  assert.equal(sb.body.breakpoints[0].verified, true, sb.body.breakpoints[0].message);
+  await client.request('configurationDone');
+  const firstStop = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'breakpoint', 'first breakpoint stop'
+  );
+  assert.equal(firstStop.body.stateVersion, 2);
+  const bpId = sb.body.breakpoints[0].id;
+  assert.deepEqual(firstStop.body.hitBreakpointIds, [bpId]);
+
+  const seen = client.events.length;
+  const restarted = await client.request('restart');
+  assert.equal(restarted.success, true, restarted.message);
+  const continued = await client.waitForEvent(
+    'continued', m => client.events.indexOf(m) >= seen, 'continued after restart'
+  );
+  assert.equal(continued.body.threadId, 1);
+  const secondStop = await client.waitForEvent(
+    'stopped',
+    m => client.events.indexOf(m) >= seen && m.body.reason === 'breakpoint',
+    'breakpoint stop after restart'
+  );
+  // A fresh kernel replays from version 1, so the same condition fires again
+  // instead of resuming the old run at version 4.
+  assert.equal(secondStop.body.stateVersion, 2);
+  assert.deepEqual(secondStop.body.hitBreakpointIds, [bpId]);
+  const vars = await client.request('variables', { variablesReference: 1 });
+  assert.equal(vars.body.variables.find(v => v.name === 'count').value, '2');
+  assert.equal(vars.body.stateVersion, 2);
+  const cont = await client.request('continue', { threadId: 1 });
+  assert.equal(cont.success, true, cont.message);
+  await client.waitForEvent(
+    'terminated', m => client.events.indexOf(m) >= seen, 'terminated after restart replay'
+  );
+  const final = await client.request('variables', { variablesReference: 1 });
+  assert.equal(final.body.variables.find(v => v.name === 'count').value, '5');
+  await finish(client);
+});
+
+test('restart resets hit counts so exact hits fire again', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', {
+    program: irPath, steps: ['tap 4', 'tap 4', 'tap 4', 'tap 4', 'tap 4'], coreBinary: stubCore
+  });
+  assert.equal(launch.success, true, launch.message);
+  const sb = await client.request('setBreakpoints', {
+    source: { path: irPath }, breakpoints: [{ hitCondition: '3' }]
+  });
+  assert.equal(sb.body.breakpoints[0].verified, true, sb.body.breakpoints[0].message);
+  await client.request('configurationDone');
+  const firstStop = await client.waitForEvent(
+    'stopped', m => m.body.reason === 'breakpoint', 'third hit before restart'
+  );
+  assert.equal(firstStop.body.stateVersion, 3);
+
+  const seen = client.events.length;
+  const restarted = await client.request('restart');
+  assert.equal(restarted.success, true, restarted.message);
+  const secondStop = await client.waitForEvent(
+    'stopped',
+    m => client.events.indexOf(m) >= seen && m.body.reason === 'breakpoint',
+    'third hit after restart'
+  );
+  assert.equal(secondStop.body.stateVersion, 3);
+  assert.match(secondStop.body.description, /hit 3 times/);
+  assert.deepEqual(secondStop.body.hitBreakpointIds, [sb.body.breakpoints[0].id]);
+  await finish(client);
+});
+
+test('restart before launch returns a typed error and keeps the server alive', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const failed = await client.request('restart');
+  assert.equal(failed.success, false);
+  assert.match(failed.message, /restart requires a launched session/);
+  assert.equal(failed.body.error.id, 1001);
+  const threads = await client.request('threads');
+  assert.equal(threads.success, true, threads.message);
   await finish(client);
 });
 
