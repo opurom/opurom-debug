@@ -34,7 +34,7 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `restart`, `hotReload`, `hotRestart`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/frame`, `opurom/frames`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -45,10 +45,10 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
 `supportsDataBreakpoints`, `supportsRestartRequest` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus seven documented Opurom extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus eight documented Opurom extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
 `supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`,
-`supportsHotReloadRequest`, `supportsHotRestartRequest`.
+`supportsHotReloadRequest`, `supportsHotRestartRequest`, `supportsFrameTimelineRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -159,6 +159,20 @@ own kernel and drops its state; `hotRestart` asks the running app's host to rest
 `sessionsClosed`), clears state and exits cleanly. The suite verifies no child process is left
 behind.
 
+### Frame timeline
+
+`opurom/frame` records one host-measured frame: `frameNumber` (positive integer), `vsyncUs`,
+`buildUs` (`>= 0`), optional `rasterUs`/`shaderUs` (`null` when the host has no real source for
+them — nothing is derived from `buildUs`), optional `tier` (`full|reduced|minimal|null`) and
+`refreshHz` (positive number). The response is the stored record with `jank` and `shaderJank`
+computed: a duration is janky only when strictly greater than `1_000_000 / refreshHz`
+microseconds, and shader jank additionally requires a raster jank plus
+`shaderUs > (1_000_000 / refreshHz) / 4`. `opurom/frames` returns the bounded 200-frame ring,
+its count and the last `refreshHz` (`null` before the first frame). Both requests require a
+launched session; the ring resets at `launch` and `restart`. This is the frame-time data plane —
+`opurom/frameStats` stays the adapter's kernel-command timing and keeps its own fields; neither
+replaces the other. Invalid frame arguments return typed error 2007.
+
 ### Frame statistics
 
 `opurom/frameStats` reports the step counters the adapter collects for the active kernel session:
@@ -226,6 +240,7 @@ typed error before one; the log resets at each `launch`.
 | 2004 | Unknown or malformed breakpoint or exception filter. |
 | 2005 | Unknown or missing `scopes` frame reference. |
 | 2006 | Hot request failed; `body.error.code` and `category` classify the failure. |
+| 2007 | Invalid frame timing arguments for `opurom/frame`. |
 
 ## Verify
 
@@ -243,7 +258,8 @@ after the final step, exact hit counts over several stub-kernel state changes, i
 capability equality, restart dropping state while replaying breakpoints and exact hit counts from
 a fresh kernel, restart rejected before launch and while steps are running, hot requests with an
 injected mock trigger (both applied actions, build-error and restart-required failures, trigger
-exceptions, malformed results, an unconfigured trigger and a bounded timeout), data breakpoint stops
+exceptions, malformed results, an unconfigured trigger and a bounded timeout), frame timeline injection with strict jank
+boundaries, null raster/shader degradation and deterministic repeats, data breakpoint stops
 on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full

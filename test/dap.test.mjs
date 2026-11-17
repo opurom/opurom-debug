@@ -395,7 +395,8 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsCompletionsRequest', 'supportsExceptionInfoRequest',
     'supportsHitConditionalBreakpoints', 'supportsDataBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
-    'supportsFrameStatsRequest', 'supportsSessionLogRequest', 'supportsRestartRequest'
+    'supportsFrameStatsRequest', 'supportsSessionLogRequest', 'supportsRestartRequest',
+    'supportsHotReloadRequest', 'supportsHotRestartRequest', 'supportsFrameTimelineRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -466,6 +467,35 @@ test('hot requests time out with a restart-required stable code', async t => {
   assert.equal(failed.body.error.retryable, false);
   assert.match(failed.message, /timed out after 60ms/);
   assert.ok(Date.now() - started < 3000, 'timeout is bounded');
+  await finish(client);
+});
+
+test('opurom/frame records host timings without touching command stats', async t => {
+  const client = startServer(t);
+  const init = await initialize(client);
+  assert.equal(init.body.supportsFrameTimelineRequest, true);
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const empty = await client.request('opurom/frames');
+  assert.deepEqual(empty.body, { frames: [], count: 0, refreshHz: null });
+  const raw = { frameNumber: 1, vsyncUs: 100, buildUs: 16667, rasterUs: null, shaderUs: null, tier: 'reduced' };
+  const recorded = await client.request('opurom/frame', { ...raw, refreshHz: 60 });
+  assert.equal(recorded.success, true, recorded.message);
+  assert.equal(recorded.body.frame.jank, true);
+  assert.equal(recorded.body.frame.rasterUs, null);
+  assert.equal(recorded.body.frame.shaderUs, null);
+  const again = await client.request('opurom/frame', { ...raw, refreshHz: 60 });
+  assert.deepEqual(again.body.frame, recorded.body.frame);
+  const frames = await client.request('opurom/frames');
+  assert.equal(frames.body.count, 2);
+  assert.equal(frames.body.refreshHz, 60);
+  assert.deepEqual(frames.body.frames[0], recorded.body.frame);
+  const stats = await client.request('opurom/frameStats');
+  assert.equal(stats.body.stepsExecuted, 0);
+  assert.equal(stats.body.stepsPlanned, 0);
+  const invalid = await client.request('opurom/frame', { ...raw, refreshHz: 0 });
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.body.error.id, 2007);
   await finish(client);
 });
 

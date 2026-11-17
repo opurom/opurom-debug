@@ -7,6 +7,7 @@ import { parseHitCount } from '../lib/hitcounts.mjs';
 import { evaluateExpression, expressionIdentifiers, parseVariableValue, valueKind, valueText } from '../lib/expressions.mjs';
 import { CAPABILITIES, EXCEPTION_FILTERS } from '../lib/capabilities.mjs';
 import { KernelSession } from '../lib/kernel.mjs';
+import { appendFrame, makeFrame } from '../lib/frames.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const defaultCoreBinary = path.resolve(root, '..', 'opurom-core', 'target', 'debug', 'opurom-core');
@@ -19,6 +20,7 @@ const ERR_PAGE = 2003;
 const ERR_BREAKPOINT = 2004;
 const ERR_SCOPE = 2005;
 const ERR_HOT = 2006;
+const ERR_TIMELINE = 2007;
 const HOT_TIMEOUT_MS = 5000;
 
 const FRAME_ID = 1;
@@ -98,6 +100,8 @@ class DapServer {
     this.hotTrigger = typeof options.hotTrigger === 'function' ? options.hotTrigger : unavailableHotTrigger;
     this.hotTimeoutMs = Number.isInteger(options.hotTimeoutMs) && options.hotTimeoutMs > 0
       ? options.hotTimeoutMs : HOT_TIMEOUT_MS;
+    this.frames = [];
+    this.frameRefreshHz = null;
     this.seq = 1;
     this.queue = Promise.resolve();
     this.output = Promise.resolve();
@@ -238,6 +242,12 @@ class DapServer {
       case 'opurom/frameStats':
         this.frameStats(message);
         return;
+      case 'opurom/frame':
+        this.recordFrame(message, args);
+        return;
+      case 'opurom/frames':
+        this.framesRequest(message);
+        return;
       case 'opurom/resourceStats':
         await this.resourceStats(message);
         return;
@@ -323,6 +333,8 @@ class DapServer {
     this.dataBreakpointId = 0;
     this.exception = null;
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
+    this.frames = [];
+    this.frameRefreshHz = null;
     this.sendResponse(request, true);
   }
 
@@ -357,6 +369,8 @@ class DapServer {
     this.skipLineBreakpoint = false;
     this.exception = null;
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
+    this.frames = [];
+    this.frameRefreshHz = null;
     for (const records of this.breakpointsBySource.values()) {
       for (const record of records) record.hits = 0;
     }
@@ -690,6 +704,32 @@ class DapServer {
 
   // The counters come from timing the adapter's own kernel commands, so they
   // describe exactly this session and need no kernel protocol support.
+  // Host-injected frame timing, separate from the command timings that
+  // opurom/frameStats reports. rasterUs/shaderUs stay null when the host has
+  // no real source for them; nothing is derived from buildUs.
+  recordFrame(request, args) {
+    this.requireKernel();
+    const refreshHz = Number(args.refreshHz);
+    let frame;
+    try {
+      frame = makeFrame(args, refreshHz);
+    } catch (error) {
+      throw new DapError(error.message, ERR_TIMELINE);
+    }
+    this.frameRefreshHz = refreshHz;
+    this.frames = appendFrame(this.frames, frame);
+    this.sendResponse(request, true, { frame });
+  }
+
+  framesRequest(request) {
+    this.requireKernel();
+    this.sendResponse(request, true, {
+      frames: [...this.frames],
+      count: this.frames.length,
+      refreshHz: this.frameRefreshHz
+    });
+  }
+
   frameStats(request) {
     this.requireKernel();
     const { executed, totalMs, lastMs } = this.stepStats;
