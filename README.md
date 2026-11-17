@@ -35,7 +35,8 @@ DAP error response, and the server stays alive.
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
 `exceptionInfo`, `opurom/frameStats`, `opurom/frame`, `opurom/frames`, `opurom/rebuild`,
-`opurom/rebuildStats`, `opurom/dirtyRegion`, `opurom/dirtyRegions`, `opurom/timeDilation`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
+`opurom/rebuildStats`, `opurom/dirtyRegion`, `opurom/dirtyRegions`, `opurom/timeDilation`,
+`opurom/firstFrame`, `opurom/error`, `opurom/errors`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -46,11 +47,12 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
 `supportsDataBreakpoints`, `supportsRestartRequest` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus eleven documented Opurom extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus thirteen documented Opurom extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
 `supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`,
 `supportsHotReloadRequest`, `supportsHotRestartRequest`, `supportsFrameTimelineRequest`,
-`supportsRebuildStatsRequest`, `supportsDirtyRegionsRequest`, `supportsTimeDilationRequest`.
+`supportsRebuildStatsRequest`, `supportsDirtyRegionsRequest`, `supportsTimeDilationRequest`,
+`supportsFirstFrameRequest`, `supportsStructuredErrorRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -183,6 +185,23 @@ replaces the other. Invalid frame arguments return typed error 2007.
 
 `opurom/timeDilation` reads the current scale with no arguments and sets it with `{scale}` (finite, 0.1..10). The adapter validates and reports the value; a host hook owns the actual animation clock, injected through `OPR_TIMEDILATION_MODULE` (an `.mjs` exporting `createTimeDilationSetter()`). Without the hook a set fails with typed error 2008 instead of pretending the scale applied; a hook error is reported the same way. The scale resets to 1 at `launch` and `restart`.
 
+### First-frame state and structured errors
+
+`opurom/firstFrame` mirrors `ext.flutter.didSendFirstFrameEvent` /
+`ext.flutter.didSendFirstFrameRasterizedEvent` and the inspector readiness flag: all three
+values are the STRINGS `'true'`/`'false'`, never booleans, because Flutter tool clients depend
+on that type (`packages/flutter/lib/src/widgets/binding.dart:719-740 @ ab2912035e`). A read
+without arguments is allowed before launch; a host reports `reported: true` and/or
+`rasterized: true` after a launched session. `treeReady` is true once the first frame was
+reported (`widget_inspector.dart:1444 @ ab2912035e`). Flags reset on `launch` and `restart`.
+Invalid arguments return typed error 2009.
+
+`opurom/error` records a structured error `{kind, message, nodeId, stack, stateVersion}` and
+`opurom/errors` returns the bounded 200-error ring. This is the `ext.flutter.inspector.structuredErrors`
+equivalent (`packages/flutter/lib/src/widgets/service_extensions.dart:144 @ ab2912035e`) without
+a runtime object tree: the host supplies the IR node id and stack. Invalid records return typed
+error 2010. Both planes reset at `launch` and `restart`.
+
 ### Frame statistics
 
 `opurom/frameStats` reports the step counters the adapter collects for the active kernel session:
@@ -252,6 +271,8 @@ typed error before one; the log resets at each `launch`.
 | 2006 | Hot request failed; `body.error.code` and `category` classify the failure. |
 | 2007 | Invalid frame timing arguments for `opurom/frame`. |
 | 2008 | Invalid observation arguments or an unavailable host hook. |
+| 2009 | Invalid `opurom/firstFrame` arguments. |
+| 2010 | Invalid structured error record. |
 
 ## Verify
 
@@ -271,7 +292,8 @@ a fresh kernel, restart rejected before launch and while steps are running, hot 
 injected mock trigger (both applied actions, build-error and restart-required failures, trigger
 exceptions, malformed results, an unconfigured trigger and a bounded timeout), frame timeline injection with strict jank
 boundaries, null raster/shader degradation and deterministic repeats, rebuild counts and
-dirty-region records, time dilation set/read/failure paths, data breakpoint stops
+dirty-region records, time dilation set/read/failure paths, first-frame string flags and reset,
+structured error records, data breakpoint stops
 on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full

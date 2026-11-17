@@ -398,7 +398,8 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
     'supportsFrameStatsRequest', 'supportsSessionLogRequest', 'supportsRestartRequest',
     'supportsHotReloadRequest', 'supportsHotRestartRequest', 'supportsFrameTimelineRequest',
-    'supportsRebuildStatsRequest', 'supportsDirtyRegionsRequest', 'supportsTimeDilationRequest'
+    'supportsRebuildStatsRequest', 'supportsDirtyRegionsRequest', 'supportsTimeDilationRequest',
+    'supportsFirstFrameRequest', 'supportsStructuredErrorRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -565,6 +566,61 @@ test('time dilation reports the host hook scale and fails explicitly', async t =
   assert.equal(unavailable.body.error.id, 2008);
   assert.match(unavailable.message, /no time dilation hook/);
   await finish(unconfigured);
+});
+
+test('first-frame flags use Flutter string semantics and reset on launch', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const before = await client.request('opurom/firstFrame');
+  assert.equal(before.success, true, before.message);
+  assert.deepEqual(before.body, { enabled: 'false', rasterized: 'false', treeReady: 'false' });
+
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const invalid = await client.request('opurom/firstFrame', { reported: 'yes' });
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.body.error.id, 2009);
+  const reported = await client.request('opurom/firstFrame', { reported: true });
+  assert.deepEqual(reported.body, { enabled: 'true', rasterized: 'false', treeReady: 'true' });
+  const rasterized = await client.request('opurom/firstFrame', { rasterized: true });
+  assert.deepEqual(rasterized.body, { enabled: 'true', rasterized: 'true', treeReady: 'true' });
+
+  const relaunch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(relaunch.success, true, relaunch.message);
+  const reset = await client.request('opurom/firstFrame');
+  assert.deepEqual(reset.body, { enabled: 'false', rasterized: 'false', treeReady: 'false' });
+  await finish(client);
+});
+
+test('structured errors are recorded with node id and stack', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const beforeLaunch = await client.request('opurom/errors');
+  assert.equal(beforeLaunch.success, false);
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const empty = await client.request('opurom/errors');
+  assert.deepEqual(empty.body, { errors: [], count: 0, capacity: 200 });
+
+  const recorded = await client.request('opurom/error', {
+    message: 'build failed', kind: 'build', nodeId: 4, stack: 'at node:4'
+  });
+  assert.equal(recorded.success, true, recorded.message);
+  assert.equal(recorded.body.error.message, 'build failed');
+  assert.equal(recorded.body.error.kind, 'build');
+  assert.equal(recorded.body.error.nodeId, 4);
+  assert.equal(recorded.body.error.stack, 'at node:4');
+  const errors = await client.request('opurom/errors');
+  assert.equal(errors.body.count, 1);
+  assert.deepEqual(errors.body.errors[0], recorded.body.error);
+
+  const invalid = await client.request('opurom/error', { message: '' });
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.body.error.id, 2010);
+  const invalidNode = await client.request('opurom/error', { message: 'x', nodeId: -1 });
+  assert.equal(invalidNode.success, false);
+  assert.equal(invalidNode.body.error.id, 2010);
+  await finish(client);
 });
 
 test('expression evaluator computes arithmetic and validates input', () => {

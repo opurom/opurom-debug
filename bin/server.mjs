@@ -22,6 +22,8 @@ const ERR_SCOPE = 2005;
 const ERR_HOT = 2006;
 const ERR_TIMELINE = 2007;
 const ERR_OBSERVE = 2008;
+const ERR_FIRST_FRAME = 2009;
+const ERR_ERROR = 2010;
 const OBSERVE_RING = 200;
 const TIME_DILATION_MIN = 0.1;
 const TIME_DILATION_MAX = 10;
@@ -111,6 +113,9 @@ class DapServer {
     this.rebuildCounts = new Map();
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
+    this.firstFrameReported = false;
+    this.firstFrameRasterized = false;
+    this.errors = [];
     this.seq = 1;
     this.queue = Promise.resolve();
     this.output = Promise.resolve();
@@ -272,6 +277,15 @@ class DapServer {
       case 'opurom/timeDilation':
         await this.timeDilation(message, args);
         return;
+      case 'opurom/firstFrame':
+        this.firstFrame(message, args);
+        return;
+      case 'opurom/error':
+        this.recordError(message, args);
+        return;
+      case 'opurom/errors':
+        this.errorsRequest(message);
+        return;
       case 'opurom/resourceStats':
         await this.resourceStats(message);
         return;
@@ -362,6 +376,9 @@ class DapServer {
     this.rebuildCounts.clear();
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
+    this.firstFrameReported = false;
+    this.firstFrameRasterized = false;
+    this.errors = [];
     this.sendResponse(request, true);
   }
 
@@ -401,6 +418,9 @@ class DapServer {
     this.rebuildCounts.clear();
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
+    this.firstFrameReported = false;
+    this.firstFrameRasterized = false;
+    this.errors = [];
     for (const records of this.breakpointsBySource.values()) {
       for (const record of records) record.hits = 0;
     }
@@ -851,6 +871,76 @@ class DapServer {
     }
     this.timeDilationScale = scale;
     this.sendResponse(request, true, { scale });
+  }
+
+  // First-frame state, aligned with the Flutter service extensions:
+  // packages/flutter/lib/src/widgets/binding.dart:719-740 @ ab2912035e returns
+  // the flag as a STRING ('true'/'false'), because DevTools, the IntelliJ
+  // plugin and flutter tool depend on that type.
+  // packages/flutter/lib/src/widgets/widget_inspector.dart:1444 @ ab2912035e
+  // defines tree readiness as the first frame having been reported.
+  firstFrame(request, args) {
+    const reported = args.reported;
+    const rasterized = args.rasterized;
+    if (reported !== undefined || rasterized !== undefined) {
+      this.requireKernel();
+      if (reported !== undefined && typeof reported !== 'boolean') {
+        throw new DapError('reported must be a boolean', ERR_FIRST_FRAME);
+      }
+      if (rasterized !== undefined && typeof rasterized !== 'boolean') {
+        throw new DapError('rasterized must be a boolean', ERR_FIRST_FRAME);
+      }
+      if (reported === true) this.firstFrameReported = true;
+      if (rasterized === true) this.firstFrameRasterized = true;
+    }
+    this.sendResponse(request, true, {
+      enabled: this.firstFrameReported ? 'true' : 'false',
+      rasterized: this.firstFrameRasterized ? 'true' : 'false',
+      treeReady: this.firstFrameReported ? 'true' : 'false'
+    });
+  }
+
+  // Structured errors, aligned with
+  // packages/flutter/lib/src/widgets/service_extensions.dart:144 @ ab2912035e
+  // (ext.flutter.inspector.structuredErrors). Without a runtime object tree
+  // there is no widget creation chain, so the record carries the IR node id
+  // and the stack the host reports.
+  recordError(request, args) {
+    this.requireKernel();
+    const message = args.message;
+    if (typeof message !== 'string' || message.trim() === '') {
+      throw new DapError('message must be a non-empty string', ERR_ERROR);
+    }
+    const nodeId = args.nodeId === undefined || args.nodeId === null ? null : args.nodeId;
+    if (nodeId !== null && (!Number.isSafeInteger(nodeId) || nodeId < 0)) {
+      throw new DapError('nodeId must be a non-negative integer', ERR_ERROR);
+    }
+    const kind = args.kind === undefined || args.kind === null ? 'error' : args.kind;
+    if (typeof kind !== 'string' || kind.trim() === '') {
+      throw new DapError('kind must be a non-empty string', ERR_ERROR);
+    }
+    const stack = args.stack === undefined || args.stack === null ? null : args.stack;
+    if (stack !== null && typeof stack !== 'string') {
+      throw new DapError('stack must be a string', ERR_ERROR);
+    }
+    const error = {
+      kind,
+      message,
+      nodeId,
+      stack,
+      stateVersion: this.kernel.version
+    };
+    this.errors = [...this.errors, error].slice(-OBSERVE_RING);
+    this.sendResponse(request, true, { error, count: this.errors.length });
+  }
+
+  errorsRequest(request) {
+    this.requireKernel();
+    this.sendResponse(request, true, {
+      errors: [...this.errors],
+      count: this.errors.length,
+      capacity: OBSERVE_RING
+    });
   }
 
   frameStats(request) {
