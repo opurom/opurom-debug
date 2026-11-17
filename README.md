@@ -179,7 +179,10 @@ replaces the other. Invalid frame arguments return typed error 2007.
 
 ### Rebuild counts and dirty regions
 
-`opurom/rebuild` records one host-reported rebuild of an IR node id and `opurom/rebuildStats` returns `{nodes:[{id,count}], total, stateVersion}`; this is the `trackRebuildDirtyWidgets` equivalent without a runtime object tree. `opurom/dirtyRegion` records one repainted subtree rect (`nodeId`, integer `x`/`y`, positive `width`/`height`, optional positive `frameNumber`) and `opurom/dirtyRegions` returns the bounded 200-record ring with `count` and `capacity`; this is the repaint-visualization data plane, and the adapter draws nothing itself. Invalid arguments return typed error 2008. Both planes reset at `launch` and `restart` and require a launched session.
+`opurom/rebuild` records one host-reported rebuild of an IR node id and `opurom/rebuildStats` returns `{nodes:[{id,count}], total, enabled, stateVersion}`; this is the `trackRebuildDirtyWidgets` equivalent without a runtime object tree. The `{enabled: bool}` toggle
+on `opurom/rebuild` follows the bool service-extension contract (foundation/binding.dart:800-808
+@ ab2912035e): it returns the STRING `'true'`/`'false'` and gates further counting. Opurom starts
+with counting enabled so existing sessions never lose rebuild data silently. `opurom/dirtyRegion` records one repainted subtree rect (`nodeId`, integer `x`/`y`, positive `width`/`height`, optional positive `frameNumber`) and `opurom/dirtyRegions` returns the bounded 200-record ring with `count` and `capacity`; this is the repaint-visualization data plane, and the adapter draws nothing itself. Invalid arguments return typed error 2008. Both planes reset at `launch` and `restart` and require a launched session.
 
 ### Time dilation
 
@@ -292,7 +295,8 @@ a fresh kernel, restart rejected before launch and while steps are running, hot 
 injected mock trigger (both applied actions, build-error and restart-required failures, trigger
 exceptions, malformed results, an unconfigured trigger and a bounded timeout), frame timeline injection with strict jank
 boundaries, null raster/shader degradation and deterministic repeats, rebuild counts and
-dirty-region records, time dilation set/read/failure paths, first-frame string flags and reset,
+dirty-region records, rebuild profiling toggle with string flags, time dilation set/read/failure paths,
+first-frame string flags and reset,
 structured error records, data breakpoint stops
 on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover

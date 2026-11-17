@@ -28,7 +28,8 @@
 | A5 | `ext.flutter.inspector.structuredErrors` | widgets/service_extensions.dart:144 | 结构化错误（带 widget 创建链） | 已实现 `opurom/error`（kind/stack 字段） |
 | A6 | `ext.flutter.debugDumpLayerTree` | rendering/service_extensions.dart:79；rendering/binding.dart:134-138 | 层树数据（`{'data': ...}`） | 部分：`opurom/layers` 为显示列表记录，非 Flutter 层树语义 |
 | A7 | `ext.flutter.debugDumpApp` | widgets/service_extensions.dart:33 | 应用树 dump | 部分：cli `inspect --tree` 为编译期 IR 树 |
-| A8 | `ext.flutter.profileWidgetBuilds` / `profileUserWidgetBuilds` | widgets/service_extensions.dart:93,104 | build 计数开关 | 部分：`opurom/rebuild` 为计数数据面，无开关语义 |
+| A8 | `ext.flutter.profileWidgetBuilds` | widgets/service_extensions.dart:93；foundation/binding.dart:800-808 | build 计数开关 | 已实现：`opurom/rebuild {enabled:bool}` 返回字符串开关并门控计数 |
+| A8b | `ext.flutter.profileUserWidgetBuilds` | widgets/service_extensions.dart:104 | 仅用户 widget 的 build 事件 | C：无“用户/框架 widget”分类，IR 节点无此区分 |
 | A9 | `ext.flutter.debugDumpSemanticsTree*` | rendering/service_extensions.dart:130,139 | 语义树 dump | 部分：render a11y sidecar 无服务面 |
 | A10 | `ext.flutter.inspector.getProperties` / `getChildren` / `getRootWidget*` | widgets/service_extensions.dart:341,353,388,404,416,430 | 树与属性查询 | 不建议：依赖运行时对象树（红线 2），按 IR 节点 id 另设数据面 |
 | A11 | `ext.flutter.inspector.dispose*` / `setSelectionById` / `getSelected*` | widgets/service_extensions.dart:203,214,239,317,456,472 | 对象句柄与选中态 | 不建议：对象句柄模型与 IR id 模型冲突 |

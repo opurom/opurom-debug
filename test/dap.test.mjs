@@ -623,6 +623,30 @@ test('structured errors are recorded with node id and stack', async t => {
   await finish(client);
 });
 
+test('rebuild profiling toggle follows bool service extension strings', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const initial = await client.request('opurom/rebuildStats');
+  assert.equal(initial.body.enabled, 'true');
+  const off = await client.request('opurom/rebuild', { enabled: false });
+  assert.equal(off.body.enabled, 'false');
+  const skipped = await client.request('opurom/rebuild', { nodeId: 9 });
+  assert.equal(skipped.body.enabled, 'false');
+  assert.equal(skipped.body.node.count, 0);
+  const disabledStats = await client.request('opurom/rebuildStats');
+  assert.equal(disabledStats.body.total, 0);
+  const on = await client.request('opurom/rebuild', { enabled: true });
+  assert.equal(on.body.enabled, 'true');
+  const counted = await client.request('opurom/rebuild', { nodeId: 9 });
+  assert.equal(counted.body.node.count, 1);
+  const invalid = await client.request('opurom/rebuild', { enabled: 'false' });
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.body.error.id, 2008);
+  await finish(client);
+});
+
 test('expression evaluator computes arithmetic and validates input', () => {
   const state = { count: 4, label: 'ok', flag: true };
   assert.equal(evaluateExpression('count + 1', state), 5);

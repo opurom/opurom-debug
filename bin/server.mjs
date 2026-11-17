@@ -111,6 +111,7 @@ class DapServer {
     this.frames = [];
     this.frameRefreshHz = null;
     this.rebuildCounts = new Map();
+    this.rebuildProfileEnabled = true;
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
     this.firstFrameReported = false;
@@ -374,6 +375,7 @@ class DapServer {
     this.frames = [];
     this.frameRefreshHz = null;
     this.rebuildCounts.clear();
+    this.rebuildProfileEnabled = true;
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
     this.firstFrameReported = false;
@@ -416,6 +418,7 @@ class DapServer {
     this.frames = [];
     this.frameRefreshHz = null;
     this.rebuildCounts.clear();
+    this.rebuildProfileEnabled = true;
     this.dirtyRegions = [];
     this.timeDilationScale = 1;
     this.firstFrameReported = false;
@@ -783,16 +786,33 @@ class DapServer {
   }
 
   // Source: packages/flutter/lib/src/widgets/service_extensions.dart:166 @ ab2912035e
-  // (trackRebuildDirtyWidgets). No runtime object tree: hosts report IR node ids.
+  // (trackRebuildDirtyWidgets) and :93 (profileWidgetBuilds). No runtime object
+  // tree: hosts report IR node ids. The enabled toggle follows the bool
+  // extension contract at foundation/binding.dart:800-808 @ ab2912035e, which
+  // returns the flag as the STRING 'true'/'false'.
   recordRebuild(request, args) {
     this.requireKernel();
+    if (args.enabled !== undefined) {
+      if (typeof args.enabled !== 'boolean') {
+        throw new DapError('enabled must be a boolean', ERR_OBSERVE);
+      }
+      this.rebuildProfileEnabled = args.enabled;
+      this.sendResponse(request, true, {
+        enabled: this.rebuildProfileEnabled ? 'true' : 'false'
+      });
+      return;
+    }
     const nodeId = args.nodeId;
     if (!Number.isSafeInteger(nodeId) || nodeId < 0) {
       throw new DapError('nodeId must be a non-negative integer', ERR_OBSERVE);
     }
-    const count = (this.rebuildCounts.get(nodeId) || 0) + 1;
+    const current = this.rebuildCounts.get(nodeId) || 0;
+    const count = this.rebuildProfileEnabled ? current + 1 : current;
     this.rebuildCounts.set(nodeId, count);
-    this.sendResponse(request, true, { node: { id: nodeId, count } });
+    this.sendResponse(request, true, {
+      node: { id: nodeId, count },
+      enabled: this.rebuildProfileEnabled ? 'true' : 'false'
+    });
   }
 
   rebuildStats(request) {
@@ -801,6 +821,7 @@ class DapServer {
     this.sendResponse(request, true, {
       nodes,
       total: nodes.reduce((sum, node) => sum + node.count, 0),
+      enabled: this.rebuildProfileEnabled ? 'true' : 'false',
       stateVersion: this.kernel.version
     });
   }
