@@ -433,6 +433,8 @@ class DapServer {
     });
   }
 
+  // Reload source: packages/flutter/lib/src/foundation/binding.dart:578 @ ab2912035e;
+  // packages/flutter_tools/lib/src/run_hot.dart:955 @ ab2912035e.
   // The trigger is injected by the host; no cli-dev endpoint exists yet, so
   // the default reports an explicit failure instead of faking an applied reload.
   async hotRequest(request, action) {
@@ -760,8 +762,8 @@ class DapServer {
     });
   }
 
-  // Rebuild counts answer the trackRebuildDirtyWidgets question without a
-  // runtime object tree: the host reports one event per IR node id it rebuilt.
+  // Source: packages/flutter/lib/src/widgets/service_extensions.dart:166 @ ab2912035e
+  // (trackRebuildDirtyWidgets). No runtime object tree: hosts report IR node ids.
   recordRebuild(request, args) {
     this.requireKernel();
     const nodeId = args.nodeId;
@@ -783,8 +785,8 @@ class DapServer {
     });
   }
 
-  // Dirty-region records are the repaint-rainbow equivalent data plane: one
-  // record per repainted IR subtree rect, host-injected until render emits them.
+  // Source: packages/flutter/lib/src/rendering/debug.dart:67,330-335 @ ab2912035e
+  // (repaint rainbow). This is the data plane; the adapter draws nothing.
   recordDirtyRegion(request, args) {
     this.requireKernel();
     const nodeId = args.nodeId;
@@ -819,7 +821,8 @@ class DapServer {
     });
   }
 
-  // timeDilation equivalent: no runtime animation clock exists here, so the
+  // Source: packages/flutter/lib/src/scheduler/service_extensions.dart:26 @ ab2912035e
+  // (timeDilation). No runtime animation clock exists here, so the
   // host hook owns the scale and the adapter only validates and reports it.
   async timeDilation(request, args) {
     this.requireKernel();
