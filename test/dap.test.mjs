@@ -16,6 +16,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const serverPath = path.join(root, 'bin', 'server.mjs');
 const irPath = path.join(root, 'test', 'fixtures', 'counter.opuir.json');
 const stubCore = path.join(root, 'fixtures', 'stub-core.mjs');
+const mockTrigger = path.join(root, 'fixtures', 'mock-hot-trigger.mjs');
 const missingCore = path.join(root, 'test', 'fixtures', 'missing-opurom-core');
 const realCore = path.resolve(root, '..', 'opurom-core', 'target', 'debug', 'opurom-core');
 const releaseCore = path.resolve(root, '..', 'opurom-core', 'target', 'release', 'opurom-core');
@@ -399,6 +400,72 @@ test('initialize advertises the full DAP capability set', async t => {
     assert.equal(init.body[key], true, key);
   }
   assert.deepEqual(init.body.exceptionBreakpointFilters.map(entry => entry.filter), ['all', 'uncaught']);
+  await finish(client);
+});
+
+test('hot requests report applied from an injected trigger', async t => {
+  const client = startServer(t, {
+    OPR_HOT_TRIGGER_MODULE: mockTrigger, OPR_HOT_MOCK_MODE: 'success'
+  });
+  const init = await initialize(client);
+  assert.equal(init.body.supportsHotReloadRequest, true);
+  assert.equal(init.body.supportsHotRestartRequest, true);
+  for (const [command, action] of [['hotReload', 'reload'], ['hotRestart', 'restart']]) {
+    const applied = await client.request(command);
+    assert.equal(applied.success, true, applied.message);
+    assert.deepEqual(applied.body, { applied: true, action, version: 7 });
+  }
+  await finish(client);
+});
+
+test('hot requests return stable codes for trigger failures', async t => {
+  const cases = [
+    ['build-error', 'build-error', 'build-error', true],
+    ['restart-required', 'restart-required', 'restart-required', false],
+    ['missing', 'trigger-error', 'restart-required', false],
+    ['invalid', 'trigger-invalid', 'restart-required', false]
+  ];
+  for (const [mode, code, category, retryable] of cases) {
+    const client = startServer(t, {
+      OPR_HOT_TRIGGER_MODULE: mockTrigger, OPR_HOT_MOCK_MODE: mode
+    });
+    await initialize(client);
+    const failed = await client.request('hotReload');
+    assert.equal(failed.success, false, mode);
+    assert.equal(failed.body.error.id, 2006, mode);
+    assert.equal(failed.body.error.code, code, mode);
+    assert.equal(failed.body.error.category, category, mode);
+    assert.equal(failed.body.error.retryable, retryable, mode);
+    assert.equal(typeof failed.message, 'string');
+    const alive = await client.request('threads');
+    assert.equal(alive.success, true, mode);
+    await finish(client);
+  }
+  const unconfigured = startServer(t);
+  await initialize(unconfigured);
+  const failed = await unconfigured.request('hotRestart');
+  assert.equal(failed.success, false);
+  assert.equal(failed.body.error.code, 'trigger-unavailable');
+  assert.equal(failed.body.error.category, 'restart-required');
+  await finish(unconfigured);
+});
+
+test('hot requests time out with a restart-required stable code', async t => {
+  const client = startServer(t, {
+    OPR_HOT_TRIGGER_MODULE: mockTrigger,
+    OPR_HOT_MOCK_MODE: 'timeout',
+    OPR_HOT_TIMEOUT_MS: '60'
+  });
+  await initialize(client);
+  const started = Date.now();
+  const failed = await client.request('hotRestart');
+  assert.equal(failed.success, false, failed.message);
+  assert.equal(failed.body.error.id, 2006);
+  assert.equal(failed.body.error.code, 'trigger-timeout');
+  assert.equal(failed.body.error.category, 'restart-required');
+  assert.equal(failed.body.error.retryable, false);
+  assert.match(failed.message, /timed out after 60ms/);
+  assert.ok(Date.now() - started < 3000, 'timeout is bounded');
   await finish(client);
 });
 

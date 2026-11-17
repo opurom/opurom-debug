@@ -31,7 +31,7 @@ DAP error response, and the server stays alive.
 
 ## Supported requests
 
-`initialize`, `launch`, `restart`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
+`initialize`, `launch`, `restart`, `hotReload`, `hotRestart`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
 `exceptionInfo`, `opurom/frameStats`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
@@ -45,9 +45,10 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
 `supportsDataBreakpoints`, `supportsRestartRequest` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus five documented Opurom extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus seven documented Opurom extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
-`supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`.
+`supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`,
+`supportsHotReloadRequest`, `supportsHotRestartRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -135,6 +136,25 @@ initial state, so a data breakpoint only fires on the next real kernel write. No
 `initialized` event is sent, so the client keeps its configuration. Like `launch`, a restart while
 steps are running is rejected, and one before `launch` returns a typed error.
 
+### Hot requests
+
+`hotReload` and `hotRestart` are custom requests for the IDE hot buttons. They do not touch the
+debug kernel: each calls an injected trigger with `reload` or `restart` and reports the result.
+A successful response is `{ applied: true, action, version }` with `version: null` when the
+trigger has no version. A failure is a typed error (id 2006) carrying a stable `code`, a
+two-class `category` (`build-error` = retryable, `restart-required` = suggest a full restart),
+and `retryable`. Trigger exceptions map to `trigger-error`, malformed results to
+`trigger-invalid`, timeouts to `trigger-timeout`, and a missing trigger to `trigger-unavailable`;
+none of these reports success. The default timeout is 5000 ms, overridable with
+`OPR_HOT_TIMEOUT_MS`. No cli-dev endpoint exists yet: without `OPR_HOT_TRIGGER_MODULE` the
+adapter reports `trigger-unavailable` rather than faking an applied reload. Set that variable to
+an `.mjs` file exporting `createHotTrigger()`; it must return a function taking the action and
+resolving to `{ ok: true, version? }` or `{ ok: false, code, category, message }`. The injection
+point is a test seam only — real wiring lands when the dev server endpoint is available.
+
+Do not confuse `hotRestart` with the standard DAP `restart`: `restart` relaunches this adapter's
+own kernel and drops its state; `hotRestart` asks the running app's host to restart.
+
 `disconnect` terminates every kernel session the adapter created (the response reports
 `sessionsClosed`), clears state and exits cleanly. The suite verifies no child process is left
 behind.
@@ -205,6 +225,7 @@ typed error before one; the log resets at each `launch`.
 | 2003 | Invalid / out-of-range `variables` page or unknown reference. |
 | 2004 | Unknown or malformed breakpoint or exception filter. |
 | 2005 | Unknown or missing `scopes` frame reference. |
+| 2006 | Hot request failed; `body.error.code` and `category` classify the failure. |
 
 ## Verify
 
@@ -220,7 +241,9 @@ breakpoint, out-of-range page), completion labels and prefix filtering, `excepti
 without an active exception, `opurom/frameStats` counters before launch, at a breakpoint stop and
 after the final step, exact hit counts over several stub-kernel state changes, initialize
 capability equality, restart dropping state while replaying breakpoints and exact hit counts from
-a fresh kernel, restart rejected before launch and while steps are running, data breakpoint stops
+a fresh kernel, restart rejected before launch and while steps are running, hot requests with an
+injected mock trigger (both applied actions, build-error and restart-required failures, trigger
+exceptions, malformed results, an unconfigured trigger and a bounded timeout), data breakpoint stops
 on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full

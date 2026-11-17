@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createFrameReader, encodeMessage } from '../lib/frame.mjs';
 import { parseCondition, matchesCondition } from '../lib/conditions.mjs';
 import { parseHitCount } from '../lib/hitcounts.mjs';
@@ -18,6 +18,8 @@ const ERR_EXPRESSION = 2002;
 const ERR_PAGE = 2003;
 const ERR_BREAKPOINT = 2004;
 const ERR_SCOPE = 2005;
+const ERR_HOT = 2006;
+const HOT_TIMEOUT_MS = 5000;
 
 const FRAME_ID = 1;
 
@@ -28,6 +30,15 @@ class DapError extends Error {
     super(message);
     this.errorId = errorId;
   }
+}
+
+function unavailableHotTrigger() {
+  return Promise.resolve({
+    ok: false,
+    code: 'trigger-unavailable',
+    category: 'restart-required',
+    message: 'no hot trigger is configured for this debug session'
+  });
 }
 
 function readProgram(value) {
@@ -83,7 +94,10 @@ function stepLineFor(step, nodeLines) {
 }
 
 class DapServer {
-  constructor() {
+  constructor(options = {}) {
+    this.hotTrigger = typeof options.hotTrigger === 'function' ? options.hotTrigger : unavailableHotTrigger;
+    this.hotTimeoutMs = Number.isInteger(options.hotTimeoutMs) && options.hotTimeoutMs > 0
+      ? options.hotTimeoutMs : HOT_TIMEOUT_MS;
     this.seq = 1;
     this.queue = Promise.resolve();
     this.output = Promise.resolve();
@@ -175,6 +189,10 @@ class DapServer {
         return;
       case 'restart':
         await this.restart(message);
+        return;
+      case 'hotReload':
+      case 'hotRestart':
+        await this.hotRequest(message, message.command === 'hotReload' ? 'reload' : 'restart');
         return;
       case 'setBreakpoints':
         this.setBreakpoints(message, args);
@@ -347,6 +365,75 @@ class DapServer {
     }
     this.sendResponse(request, true);
     this.startSteps();
+  }
+
+  sendHotFailure(request, action, failure) {
+    const message = failure.message || `hot ${action} failed`;
+    const category = failure.category === 'build-error' ? 'build-error' : 'restart-required';
+    return this.write({
+      type: 'response',
+      request_seq: request.seq,
+      success: false,
+      command: request.command,
+      message,
+      body: {
+        error: {
+          id: ERR_HOT,
+          code: typeof failure.code === 'string' && failure.code ? failure.code : 'trigger-error',
+          category,
+          retryable: category === 'build-error',
+          format: message,
+          showUser: true
+        }
+      }
+    });
+  }
+
+  // The trigger is injected by the host; no cli-dev endpoint exists yet, so
+  // the default reports an explicit failure instead of faking an applied reload.
+  async hotRequest(request, action) {
+    let timer;
+    const timeout = new Promise(resolve => {
+      timer = setTimeout(() => resolve({
+        ok: false,
+        code: 'trigger-timeout',
+        category: 'restart-required',
+        message: `hot ${action} trigger timed out after ${this.hotTimeoutMs}ms`
+      }), this.hotTimeoutMs);
+    });
+    let outcome;
+    try {
+      outcome = await Promise.race([
+        Promise.resolve().then(() => this.hotTrigger(action)),
+        timeout
+      ]);
+    } catch (error) {
+      outcome = {
+        ok: false,
+        code: 'trigger-error',
+        category: 'restart-required',
+        message: error?.message || `hot ${action} trigger failed`
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!outcome || typeof outcome !== 'object' || typeof outcome.ok !== 'boolean') {
+      this.sendHotFailure(request, action, {
+        code: 'trigger-invalid',
+        category: 'restart-required',
+        message: `hot ${action} trigger returned an invalid result`
+      });
+      return;
+    }
+    if (!outcome.ok) {
+      this.sendHotFailure(request, action, outcome);
+      return;
+    }
+    this.sendResponse(request, true, {
+      applied: true,
+      action,
+      version: Number.isInteger(outcome.version) ? outcome.version : null
+    });
   }
 
   setBreakpoints(request, args) {
@@ -899,7 +986,28 @@ if (!process.argv.includes('--stdio')) {
   process.exit(2);
 }
 
-const server = new DapServer();
+// Injection seam: OPR_HOT_TRIGGER_MODULE names an .mjs exporting createHotTrigger,
+// which returns (action: 'reload'|'restart') => Promise<hot result>.
+async function loadHotTrigger() {
+  const modulePath = process.env.OPR_HOT_TRIGGER_MODULE;
+  if (!modulePath) return undefined;
+  try {
+    const module = await import(pathToFileURL(path.resolve(modulePath)).href);
+    const factory = module.createHotTrigger || module.default;
+    if (typeof factory !== 'function') return undefined;
+    const trigger = await factory();
+    return typeof trigger === 'function' ? trigger : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const configuredTimeout = Number(process.env.OPR_HOT_TIMEOUT_MS);
+const server = new DapServer({
+  hotTrigger: await loadHotTrigger(),
+  hotTimeoutMs: Number.isInteger(configuredTimeout) && configuredTimeout > 0
+    ? configuredTimeout : undefined
+});
 const reader = createFrameReader(
   message => server.onMessage(message),
   error => server.onFrameError(error)
