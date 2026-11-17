@@ -34,7 +34,8 @@ DAP error response, and the server stays alive.
 `initialize`, `launch`, `restart`, `hotReload`, `hotRestart`, `setBreakpoints`, `setExceptionBreakpoints`, `dataBreakpointInfo`,
 `setDataBreakpoints`, `configurationDone`,
 `threads`, `stackTrace`, `scopes`, `variables`, `setVariable`, `evaluate`, `completions`,
-`exceptionInfo`, `opurom/frameStats`, `opurom/frame`, `opurom/frames`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
+`exceptionInfo`, `opurom/frameStats`, `opurom/frame`, `opurom/frames`, `opurom/rebuild`,
+`opurom/rebuildStats`, `opurom/dirtyRegion`, `opurom/dirtyRegions`, `opurom/timeDilation`, `opurom/sessionLog`, `opurom/resourceStats`, `opurom/layers`, `opurom/networkStats`, `opurom/navigation`, `continue`, `next`, `stepIn`, `stepOut`,
 `pause`,
 `disconnect`. Unknown requests
 and malformed frames get proper DAP error responses without terminating the server. Events:
@@ -45,10 +46,11 @@ and malformed frames get proper DAP error responses without terminating the serv
 `supportsHitConditionalBreakpoints`, `supportsSetVariable`, `supportsVariablePaging`,
 `supportsExceptionFilterOptions`, `supportsCompletionsRequest`, `supportsExceptionInfoRequest`,
 `supportsDataBreakpoints`, `supportsRestartRequest` and
-`exceptionBreakpointFilters` (`all`, `uncaught`), plus eight documented Opurom extension flags
+`exceptionBreakpointFilters` (`all`, `uncaught`), plus eleven documented Opurom extension flags
 that DAP has no boolean for: `supportsEvaluateExpressions`, `supportsStepInOutRequests`,
 `supportsVerifiedSourceBreakpoints`, `supportsFrameStatsRequest`, `supportsSessionLogRequest`,
-`supportsHotReloadRequest`, `supportsHotRestartRequest`, `supportsFrameTimelineRequest`.
+`supportsHotReloadRequest`, `supportsHotRestartRequest`, `supportsFrameTimelineRequest`,
+`supportsRebuildStatsRequest`, `supportsDirtyRegionsRequest`, `supportsTimeDilationRequest`.
 `lib/capabilities.mjs` is the single source of truth; a test asserts a real framed `initialize`
 response deep-equals it, and `bin/capabilities.mjs` prints the same object.
 
@@ -173,6 +175,14 @@ launched session; the ring resets at `launch` and `restart`. This is the frame-t
 `opurom/frameStats` stays the adapter's kernel-command timing and keeps its own fields; neither
 replaces the other. Invalid frame arguments return typed error 2007.
 
+### Rebuild counts and dirty regions
+
+`opurom/rebuild` records one host-reported rebuild of an IR node id and `opurom/rebuildStats` returns `{nodes:[{id,count}], total, stateVersion}`; this is the `trackRebuildDirtyWidgets` equivalent without a runtime object tree. `opurom/dirtyRegion` records one repainted subtree rect (`nodeId`, integer `x`/`y`, positive `width`/`height`, optional positive `frameNumber`) and `opurom/dirtyRegions` returns the bounded 200-record ring with `count` and `capacity`; this is the repaint-visualization data plane, and the adapter draws nothing itself. Invalid arguments return typed error 2008. Both planes reset at `launch` and `restart` and require a launched session.
+
+### Time dilation
+
+`opurom/timeDilation` reads the current scale with no arguments and sets it with `{scale}` (finite, 0.1..10). The adapter validates and reports the value; a host hook owns the actual animation clock, injected through `OPR_TIMEDILATION_MODULE` (an `.mjs` exporting `createTimeDilationSetter()`). Without the hook a set fails with typed error 2008 instead of pretending the scale applied; a hook error is reported the same way. The scale resets to 1 at `launch` and `restart`.
+
 ### Frame statistics
 
 `opurom/frameStats` reports the step counters the adapter collects for the active kernel session:
@@ -241,6 +251,7 @@ typed error before one; the log resets at each `launch`.
 | 2005 | Unknown or missing `scopes` frame reference. |
 | 2006 | Hot request failed; `body.error.code` and `category` classify the failure. |
 | 2007 | Invalid frame timing arguments for `opurom/frame`. |
+| 2008 | Invalid observation arguments or an unavailable host hook. |
 
 ## Verify
 
@@ -259,7 +270,8 @@ capability equality, restart dropping state while replaying breakpoints and exac
 a fresh kernel, restart rejected before launch and while steps are running, hot requests with an
 injected mock trigger (both applied actions, build-error and restart-required failures, trigger
 exceptions, malformed results, an unconfigured trigger and a bounded timeout), frame timeline injection with strict jank
-boundaries, null raster/shader degradation and deterministic repeats, data breakpoint stops
+boundaries, null raster/shader degradation and deterministic repeats, rebuild counts and
+dirty-region records, time dilation set/read/failure paths, data breakpoint stops
 on watched state writes (including a baseline moved by
 `setVariable`), rejected data breakpoint ids and access types, session cleanup with no leftover
 child processes, and a full

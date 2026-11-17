@@ -17,6 +17,7 @@ const serverPath = path.join(root, 'bin', 'server.mjs');
 const irPath = path.join(root, 'test', 'fixtures', 'counter.opuir.json');
 const stubCore = path.join(root, 'fixtures', 'stub-core.mjs');
 const mockTrigger = path.join(root, 'fixtures', 'mock-hot-trigger.mjs');
+const mockTimeDilation = path.join(root, 'fixtures', 'mock-time-dilation.mjs');
 const missingCore = path.join(root, 'test', 'fixtures', 'missing-opurom-core');
 const realCore = path.resolve(root, '..', 'opurom-core', 'target', 'debug', 'opurom-core');
 const releaseCore = path.resolve(root, '..', 'opurom-core', 'target', 'release', 'opurom-core');
@@ -396,7 +397,8 @@ test('initialize advertises the full DAP capability set', async t => {
     'supportsHitConditionalBreakpoints', 'supportsDataBreakpoints',
     'supportsEvaluateExpressions', 'supportsStepInOutRequests', 'supportsVerifiedSourceBreakpoints',
     'supportsFrameStatsRequest', 'supportsSessionLogRequest', 'supportsRestartRequest',
-    'supportsHotReloadRequest', 'supportsHotRestartRequest', 'supportsFrameTimelineRequest'
+    'supportsHotReloadRequest', 'supportsHotRestartRequest', 'supportsFrameTimelineRequest',
+    'supportsRebuildStatsRequest', 'supportsDirtyRegionsRequest', 'supportsTimeDilationRequest'
   ]) {
     assert.equal(init.body[key], true, key);
   }
@@ -497,6 +499,72 @@ test('opurom/frame records host timings without touching command stats', async t
   assert.equal(invalid.success, false);
   assert.equal(invalid.body.error.id, 2007);
   await finish(client);
+});
+
+test('rebuild counts and dirty regions expose observation planes', async t => {
+  const client = startServer(t);
+  await initialize(client);
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  for (const nodeId of [2, 2, 4]) {
+    const recorded = await client.request('opurom/rebuild', { nodeId });
+    assert.equal(recorded.success, true, recorded.message);
+  }
+  const stats = await client.request('opurom/rebuildStats');
+  assert.deepEqual(stats.body.nodes, [{ id: 2, count: 2 }, { id: 4, count: 1 }]);
+  assert.equal(stats.body.total, 3);
+  const invalid = await client.request('opurom/rebuild', { nodeId: -1 });
+  assert.equal(invalid.success, false);
+  assert.equal(invalid.body.error.id, 2008);
+  const region = await client.request('opurom/dirtyRegion', {
+    nodeId: 2, x: 0, y: 4, width: 120, height: 32, frameNumber: 3
+  });
+  assert.deepEqual(region.body.region, {
+    nodeId: 2, x: 0, y: 4, width: 120, height: 32, frameNumber: 3
+  });
+  const badRegion = await client.request('opurom/dirtyRegion', { nodeId: 2, x: 0, y: 0, width: 0, height: 10 });
+  assert.equal(badRegion.success, false);
+  assert.equal(badRegion.body.error.id, 2008);
+  const regions = await client.request('opurom/dirtyRegions');
+  assert.equal(regions.body.count, 1);
+  assert.deepEqual(regions.body.regions, [region.body.region]);
+  await finish(client);
+});
+
+test('time dilation reports the host hook scale and fails explicitly', async t => {
+  const client = startServer(t, { OPR_TIMEDILATION_MODULE: mockTimeDilation });
+  await initialize(client);
+  const launch = await client.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(launch.success, true, launch.message);
+  const applied = await client.request('opurom/timeDilation', { scale: 4 });
+  assert.equal(applied.success, true, applied.message);
+  assert.deepEqual(applied.body, { scale: 4 });
+  const read = await client.request('opurom/timeDilation');
+  assert.deepEqual(read.body, { scale: 4 });
+  const outOfRange = await client.request('opurom/timeDilation', { scale: 0.05 });
+  assert.equal(outOfRange.success, false);
+  assert.equal(outOfRange.body.error.id, 2008);
+  await finish(client);
+
+  const throwing = startServer(t, { OPR_TIMEDILATION_MODULE: mockTimeDilation, OPR_TIMEDILATION_MOCK: 'throw' });
+  await initialize(throwing);
+  const thrownLaunch = await throwing.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(thrownLaunch.success, true, thrownLaunch.message);
+  const failed = await throwing.request('opurom/timeDilation', { scale: 2 });
+  assert.equal(failed.success, false);
+  assert.equal(failed.body.error.id, 2008);
+  assert.match(failed.message, /mock time dilation hook failed/);
+  await finish(throwing);
+
+  const unconfigured = startServer(t);
+  await initialize(unconfigured);
+  const bareLaunch = await unconfigured.request('launch', { program: irPath, steps: [], coreBinary: stubCore });
+  assert.equal(bareLaunch.success, true, bareLaunch.message);
+  const unavailable = await unconfigured.request('opurom/timeDilation', { scale: 2 });
+  assert.equal(unavailable.success, false);
+  assert.equal(unavailable.body.error.id, 2008);
+  assert.match(unavailable.message, /no time dilation hook/);
+  await finish(unconfigured);
 });
 
 test('expression evaluator computes arithmetic and validates input', () => {

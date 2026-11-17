@@ -21,6 +21,10 @@ const ERR_BREAKPOINT = 2004;
 const ERR_SCOPE = 2005;
 const ERR_HOT = 2006;
 const ERR_TIMELINE = 2007;
+const ERR_OBSERVE = 2008;
+const OBSERVE_RING = 200;
+const TIME_DILATION_MIN = 0.1;
+const TIME_DILATION_MAX = 10;
 const HOT_TIMEOUT_MS = 5000;
 
 const FRAME_ID = 1;
@@ -100,8 +104,13 @@ class DapServer {
     this.hotTrigger = typeof options.hotTrigger === 'function' ? options.hotTrigger : unavailableHotTrigger;
     this.hotTimeoutMs = Number.isInteger(options.hotTimeoutMs) && options.hotTimeoutMs > 0
       ? options.hotTimeoutMs : HOT_TIMEOUT_MS;
+    this.timeDilationSetter = typeof options.timeDilationSetter === 'function'
+      ? options.timeDilationSetter : null;
     this.frames = [];
     this.frameRefreshHz = null;
+    this.rebuildCounts = new Map();
+    this.dirtyRegions = [];
+    this.timeDilationScale = 1;
     this.seq = 1;
     this.queue = Promise.resolve();
     this.output = Promise.resolve();
@@ -248,6 +257,21 @@ class DapServer {
       case 'opurom/frames':
         this.framesRequest(message);
         return;
+      case 'opurom/rebuild':
+        this.recordRebuild(message, args);
+        return;
+      case 'opurom/rebuildStats':
+        this.rebuildStats(message);
+        return;
+      case 'opurom/dirtyRegion':
+        this.recordDirtyRegion(message, args);
+        return;
+      case 'opurom/dirtyRegions':
+        this.dirtyRegionsRequest(message);
+        return;
+      case 'opurom/timeDilation':
+        await this.timeDilation(message, args);
+        return;
       case 'opurom/resourceStats':
         await this.resourceStats(message);
         return;
@@ -335,6 +359,9 @@ class DapServer {
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.frames = [];
     this.frameRefreshHz = null;
+    this.rebuildCounts.clear();
+    this.dirtyRegions = [];
+    this.timeDilationScale = 1;
     this.sendResponse(request, true);
   }
 
@@ -371,6 +398,9 @@ class DapServer {
     this.stepStats = { executed: 0, totalMs: 0, lastMs: 0 };
     this.frames = [];
     this.frameRefreshHz = null;
+    this.rebuildCounts.clear();
+    this.dirtyRegions = [];
+    this.timeDilationScale = 1;
     for (const records of this.breakpointsBySource.values()) {
       for (const record of records) record.hits = 0;
     }
@@ -730,6 +760,96 @@ class DapServer {
     });
   }
 
+  // Rebuild counts answer the trackRebuildDirtyWidgets question without a
+  // runtime object tree: the host reports one event per IR node id it rebuilt.
+  recordRebuild(request, args) {
+    this.requireKernel();
+    const nodeId = args.nodeId;
+    if (!Number.isSafeInteger(nodeId) || nodeId < 0) {
+      throw new DapError('nodeId must be a non-negative integer', ERR_OBSERVE);
+    }
+    const count = (this.rebuildCounts.get(nodeId) || 0) + 1;
+    this.rebuildCounts.set(nodeId, count);
+    this.sendResponse(request, true, { node: { id: nodeId, count } });
+  }
+
+  rebuildStats(request) {
+    this.requireKernel();
+    const nodes = [...this.rebuildCounts.entries()].map(([id, count]) => ({ id, count }));
+    this.sendResponse(request, true, {
+      nodes,
+      total: nodes.reduce((sum, node) => sum + node.count, 0),
+      stateVersion: this.kernel.version
+    });
+  }
+
+  // Dirty-region records are the repaint-rainbow equivalent data plane: one
+  // record per repainted IR subtree rect, host-injected until render emits them.
+  recordDirtyRegion(request, args) {
+    this.requireKernel();
+    const nodeId = args.nodeId;
+    const values = [args.x, args.y, args.width, args.height];
+    if (!Number.isSafeInteger(nodeId) || nodeId < 0 ||
+        !values.every(value => Number.isSafeInteger(value)) ||
+        args.width <= 0 || args.height <= 0) {
+      throw new DapError(
+        'a dirty region needs an integer nodeId, x/y and a positive width/height',
+        ERR_OBSERVE
+      );
+    }
+    const region = {
+      nodeId,
+      x: args.x,
+      y: args.y,
+      width: args.width,
+      height: args.height,
+      frameNumber: Number.isSafeInteger(args.frameNumber) && args.frameNumber > 0
+        ? args.frameNumber : null
+    };
+    this.dirtyRegions = [...this.dirtyRegions, region].slice(-OBSERVE_RING);
+    this.sendResponse(request, true, { region, count: this.dirtyRegions.length });
+  }
+
+  dirtyRegionsRequest(request) {
+    this.requireKernel();
+    this.sendResponse(request, true, {
+      regions: [...this.dirtyRegions],
+      count: this.dirtyRegions.length,
+      capacity: OBSERVE_RING
+    });
+  }
+
+  // timeDilation equivalent: no runtime animation clock exists here, so the
+  // host hook owns the scale and the adapter only validates and reports it.
+  async timeDilation(request, args) {
+    this.requireKernel();
+    const scale = args.scale;
+    if (scale === undefined) {
+      this.sendResponse(request, true, { scale: this.timeDilationScale });
+      return;
+    }
+    if (typeof scale !== 'number' || !Number.isFinite(scale) ||
+        scale < TIME_DILATION_MIN || scale > TIME_DILATION_MAX) {
+      throw new DapError(
+        `scale must be a finite number in ${TIME_DILATION_MIN}..${TIME_DILATION_MAX}`,
+        ERR_OBSERVE
+      );
+    }
+    if (!this.timeDilationSetter) {
+      throw new DapError('the host exposes no time dilation hook', ERR_OBSERVE);
+    }
+    try {
+      await this.timeDilationSetter(scale);
+    } catch (error) {
+      throw new DapError(
+        `time dilation hook failed: ${error?.message || String(error)}`,
+        ERR_OBSERVE
+      );
+    }
+    this.timeDilationScale = scale;
+    this.sendResponse(request, true, { scale });
+  }
+
   frameStats(request) {
     this.requireKernel();
     const { executed, totalMs, lastMs } = this.stepStats;
@@ -1042,9 +1162,26 @@ async function loadHotTrigger() {
   }
 }
 
+// Same injection seam for the time dilation hook: OPR_TIMEDILATION_MODULE names
+// an .mjs exporting createTimeDilationSetter() => (scale) => void|Promise.
+async function loadTimeDilationSetter() {
+  const modulePath = process.env.OPR_TIMEDILATION_MODULE;
+  if (!modulePath) return undefined;
+  try {
+    const module = await import(pathToFileURL(path.resolve(modulePath)).href);
+    const factory = module.createTimeDilationSetter || module.default;
+    if (typeof factory !== 'function') return undefined;
+    const setter = await factory();
+    return typeof setter === 'function' ? setter : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const configuredTimeout = Number(process.env.OPR_HOT_TIMEOUT_MS);
 const server = new DapServer({
   hotTrigger: await loadHotTrigger(),
+  timeDilationSetter: await loadTimeDilationSetter(),
   hotTimeoutMs: Number.isInteger(configuredTimeout) && configuredTimeout > 0
     ? configuredTimeout : undefined
 });
